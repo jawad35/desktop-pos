@@ -83,6 +83,11 @@ type ElectronAPI = {
     getDataLocation: () => Promise<any>;
     backupData: () => Promise<any>;
     openDataFolder: () => Promise<void>;
+
+   // License methods
+    activateLicense: (licenseKey: string) => Promise<any>;
+    checkLicense: () => Promise<any>;
+    verifyLicenseOnline: () => Promise<any>;
 };
 
 // Check if running in Electron
@@ -96,6 +101,11 @@ const electronAPI: ElectronAPI = {
     login: (email, password) => window.electronAPI.login(email, password),
     logout: () => window.electronAPI.logout(),
     getCurrentUser: () => window.electronAPI.getCurrentUser(),
+    // License methods
+    activateLicense: (licenseKey) => window.electronAPI.activateLicense(licenseKey),
+    checkLicense: () => window.electronAPI.checkLicense(),
+    verifyLicenseOnline: () => window.electronAPI.verifyLicenseOnline(),
+
 
     // Products
     // Products

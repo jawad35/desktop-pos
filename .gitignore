@@ -1,2 +1,17 @@
-node_modules
-release
+# dependencies
+node_modules/
+
+# build outputs
+dist/
+build/
+release/
+
+# environment
+.env
+
+# logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

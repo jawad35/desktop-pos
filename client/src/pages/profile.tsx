@@ -1,31 +1,46 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useAuth } from "@/hooks/useAuth";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useHeader } from "@/contexts/HeaderContext";
 
 export function Profile() {
-    const { shop } = useAuth();
+    const [shop, setShop] = useState<any>(null);
+    const [subscriptionHistory, setSubscriptionHistory] = useState<any[]>([]);
     const { setTitle, setSubtitle } = useHeader();
-
-
-    // Mock subscription history (replace with API call later)
-    const subscriptionHistory = [
-        { id: 1, amount: 15000, date: "2025-09-04", status: "Paid" },
-        { id: 2, amount: 15000, date: "2025-08-04", status: "Paid" },
-        { id: 3, amount: 15000, date: "2025-07-04", status: "Paid" },
-    ];
 
     useEffect(() => {
         setTitle("Profile");
-        setSubtitle("See Shop Details");
+        setSubtitle("Shop Details");
+        loadShopData();
     }, []);
+
+    const loadShopData = async () => {
+        try {
+            // Get shop data from local license
+            if (window.electronAPI && window.electronAPI.getShopData) {
+                const result = await window.electronAPI.getShopData();
+                if (result.success && result.shop) {
+                    setShop(result.shop);
+                }
+            }
+            
+            // TODO: Load subscription history from local storage or API when online
+            // For now, use mock data
+            setSubscriptionHistory([
+                { id: 1, amount: 15000, date: "2025-09-04", status: "Paid" },
+                { id: 2, amount: 15000, date: "2025-08-04", status: "Paid" },
+                { id: 3, amount: 15000, date: "2025-07-04", status: "Paid" },
+            ]);
+        } catch (error) {
+            console.error('Failed to load shop data:', error);
+        }
+    };
 
     if (!shop) {
         return (
             <div className="p-6">
-                <p className="text-muted-foreground">No shop details available.</p>
+                <p className="text-muted-foreground">Loading shop details...</p>
             </div>
         );
     }
@@ -60,9 +75,6 @@ export function Profile() {
                         <p className="font-medium">Owner</p>
                         <p>{shop.owner}</p>
 
-                        <p className="font-medium">Email</p>
-                        <p>{shop.email}</p>
-
                         <p className="font-medium">Type</p>
                         <p>{shop.type}</p>
 
@@ -87,14 +99,6 @@ export function Profile() {
                                 ? new Date(shop.expiryDate).toLocaleDateString()
                                 : "-"}
                         </p>
-
-                        {/* <p className="font-medium">Storage Used</p>
-            <p>
-              {shop.storageUsed} / {shop.storageLimit} MB
-            </p> */}
-
-                        {/* <p className="font-medium">Total Revenue</p>
-            <p>Rs. {shop.totalRevenue}</p> */}
 
                         <p className="font-medium">Created At</p>
                         <p>{new Date(shop.createdAt).toLocaleDateString()}</p>

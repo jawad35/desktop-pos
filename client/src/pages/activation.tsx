@@ -3,7 +3,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Key, CheckCircle, AlertCircle } from 'lucide-react';
+import { Loader2, Key, CheckCircle, AlertCircle, Shield } from 'lucide-react';
+import { useLocation } from "wouter";
 
 interface ActivationProps {
     onActivated: () => void;
@@ -14,7 +15,7 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
     const { toast } = useToast();
-
+    const [, setLocation] = useLocation();
     const handleActivate = async () => {
         if (!licenseKey.trim()) {
             setError('Please enter your license key');
@@ -25,15 +26,14 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
         setError('');
 
         try {
-            // Send activation request to main process
             const result = await window.electronAPI.activateLicense(licenseKey);
-            
+
             if (result.success) {
                 toast({
-                    title: "Activation Successful!",
+                    title: "Activation Successful! 🎉",
                     description: `Your license is valid until ${new Date(result.expiry_date).toLocaleDateString()}`,
                 });
-                onActivated();
+                setLocation('/')
             } else {
                 setError(result.message || 'Activation failed');
                 toast({
@@ -56,10 +56,10 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
 
     return (
         <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-primary/5 to-secondary/5">
-            <Card className="w-full max-w-md mx-4">
+            <Card className="w-full max-w-md mx-4 shadow-xl">
                 <CardHeader className="text-center">
-                    <div className="mx-auto mb-4 w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
-                        <Key className="h-8 w-8 text-primary" />
+                    <div className="mx-auto mb-4 w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center">
+                        <Shield className="h-10 w-10 text-primary" />
                     </div>
                     <CardTitle className="text-2xl">Activate Your License</CardTitle>
                     <p className="text-sm text-muted-foreground mt-2">
@@ -76,7 +76,7 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
                                 setLicenseKey(e.target.value.toUpperCase());
                                 setError('');
                             }}
-                            className="text-center font-mono text-lg"
+                            className="text-center font-mono text-lg tracking-wider"
                             disabled={isLoading}
                         />
                         {error && (
@@ -106,9 +106,10 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
                         )}
                     </Button>
 
-                    <div className="text-center text-xs text-muted-foreground">
+                    <div className="text-center text-xs text-muted-foreground border-t pt-4 mt-4">
                         <p>Internet connection required for activation</p>
-                        <p className="mt-1">After activation, the software works offline</p>
+                        <p className="mt-1">After activation, the software works completely offline</p>
+                        <p className="mt-4 text-primary">Need help? Contact support at support@yourdomain.com</p>
                     </div>
                 </CardContent>
             </Card>

@@ -1,9 +1,9 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "../src/components/ui/toaster";
 import { TooltipProvider } from "../src/components/ui/tooltip";
-import {useAuth } from "../src/hooks/useAuth";
 import { AppLayout } from "../src/components/layout/AppLayout";
+import { useEffect, useState } from "react";
 
 // Pages
 import Home from "@/pages/home";
@@ -17,7 +17,6 @@ import TransactionLogs from "@/pages/transaction-logs";
 import ReceiptManagement from "@/pages/receipt-management";
 import Expenses from "@/pages/expenses";
 import NotFound from "@/pages/not-found";
-import LoginPage from "./pages/login";
 import { HeaderProvider } from "./contexts/HeaderContext";
 import SettingsPage from "./pages/settings";
 import Employees from "./pages/employees/page";
@@ -27,51 +26,96 @@ import Returns from "./pages/returns";
 import ItemDetails from "./pages/item-details";
 import AdminDashboard from "./pages/admin";
 import { queryClient } from "./lib/queryClient";
+import ActivationScreen from "@/pages/activation";
+
+// Check if license is valid
+function useLicense() {
+  const [isLicensed, setIsLicensed] = useState<boolean | null>(null);
+  const [licenseData, setLicenseData] = useState<any>(null);
+
+  useEffect(() => {
+    checkLicense();
+  }, []);
+
+  const checkLicense = async () => {
+    try {
+      if (window.electronAPI && window.electronAPI.checkLicense) {
+        const result = await window.electronAPI.checkLicense();
+        setIsLicensed(result.success);
+        setLicenseData(result);
+      } else {
+        setIsLicensed(true);
+      }
+    } catch (error) {
+      console.error("License check failed:", error);
+      setIsLicensed(false);
+    }
+  };
+
+  return { isLicensed, licenseData, checkLicense };
+}
 
 function Router() {
-  const { isAuthenticated, isLoading, user } = useAuth();
+  const [location, setLocation] = useLocation();
+  const { isLicensed } = useLicense();
 
-  if (isLoading) {
+  // Wait for license check
+  if (isLicensed === null) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
           <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading...</p>
+          <p className="text-muted-foreground">Checking license...</p>
         </div>
       </div>
     );
   }
 
+  // Check if we're on activation route
+  if (location === '/activation') {
+    return <ActivationScreen onActivated={() => {
+      // Force a complete reload after activation
+      window.location.href = '/';
+    }} />;
+  }
+
+  // If not licensed and not on activation page, show activation
+  if (!isLicensed && location !== '/activation') {
+    return <ActivationScreen onActivated={() => {
+      window.location.href = '/';
+    }} />;
+  }
+
+  // Licensed - show main app
   return (
-    <Switch>
-      {isAuthenticated ? (
-        <Route path="/" component={LoginPage} />
-      ) : (
-        <AppLayout>
-          <Switch>
-            <Route path="/" component={Home} />
-            <Route path="/pos" component={POS} />
-            <Route path="/products" component={Products} />
-            <Route path="/sales" component={Sales} />
-            <Route path="/returns" component={Returns} />
-            <Route path="/item-details/:id/:mode" component={ItemDetails} />
-            <Route path="/purchases" component={Purchases} />
-            <Route path="/suppliers" component={Suppliers} />
-            <Route path="/categories" component={Categories} />
-            <Route path="/transaction-logs" component={TransactionLogs} />
-            <Route path="/receipt-management" component={ReceiptManagement} />
-            <Route path="/expenses" component={Expenses} />
-            <Route path="/employees/:id" component={EmployeeDetails} />
-            <Route path="/employees" component={Employees} />
-            {user?.role === 'admin' && <Route path="/admin" component={AdminDashboard} />}
-            <Route path="/settings" component={SettingsPage} />
-            <Route path="/profile" component={Profile} />
-            <Route component={NotFound} />
-          </Switch>
-        </AppLayout>
-      )}
-      <Route component={NotFound} />
-    </Switch>
+    <AppLayout>
+      <Switch>
+        <Route path="/" component={Home} />
+        <Route path="/pos" component={POS} />
+        <Route path="/products" component={Products} />
+        <Route path="/sales" component={Sales} />
+        <Route path="/returns" component={Returns} />
+        <Route path="/item-details/:id/:mode" component={ItemDetails} />
+        <Route path="/purchases" component={Purchases} />
+        <Route path="/suppliers" component={Suppliers} />
+        <Route path="/categories" component={Categories} />
+        <Route path="/transaction-logs" component={TransactionLogs} />
+        <Route path="/receipt-management" component={ReceiptManagement} />
+        <Route path="/expenses" component={Expenses} />
+        <Route path="/employees/:id" component={EmployeeDetails} />
+        <Route path="/employees" component={Employees} />
+        <Route path="/admin" component={AdminDashboard} />
+        <Route path="/settings" component={SettingsPage} />
+        <Route path="/profile" component={Profile} />
+        {/* Add a catch-all route that redirects to home */}
+        <Route path="*" component={() => {
+          useEffect(() => {
+            setLocation('/');
+          }, []);
+          return null;
+        }} />
+      </Switch>
+    </AppLayout>
   );
 }
 
@@ -81,9 +125,7 @@ function App() {
       <TooltipProvider>
         <Toaster />
         <HeaderProvider>
-          {/* <AuthProvider> */}
-            <Router />
-          {/* </AuthProvider> */}
+          <Router />
         </HeaderProvider>
       </TooltipProvider>
     </QueryClientProvider>

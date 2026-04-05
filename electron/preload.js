@@ -290,6 +290,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     logout: () => ipcRenderer.invoke('auth:logout'),
     getCurrentUser: () => ipcRenderer.invoke('auth:getCurrentUser'),
 
+    // License methods
+    activateLicense: async (licenseKey) => {
+        return await ipcRenderer.invoke('license:activate', licenseKey);
+    },
+    checkLicense: async () => {
+        return await ipcRenderer.invoke('license:check');
+    },
+    verifyLicenseOnline: async () => {
+        return await ipcRenderer.invoke('license:verifyOnline');
+    },
+    // In preload.js
+    clearLicense: async () => {
+        return await ipcRenderer.invoke('license:clear');
+    },
+
     // Utility
     onDatabaseUpdate: (callback) => {
         ipcRenderer.on('db:updated', (event, data) => callback(data));
