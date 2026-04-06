@@ -2,13 +2,12 @@ name: Build Windows EXE
 
 on:
   push:
-    branches: [window-setup]
+    branches: [ window-setup ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -16,17 +15,22 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'  # Changed from 18 to 22
-          
+          node-version: '22' # Using a newer, stable version
+          cache: 'npm'
+      
+      # Force rebuild of better-sqlite3 for Windows
+      - name: Rebuild native module
+        run: npm rebuild better-sqlite3 --update-binary
+      
       - name: Install dependencies
-        run: npm install
-        
+        run: npm install --ignore-scripts # Ignore the failing postinstall script
+      
       - name: Build React app
         run: npm run build
-        
+      
       - name: Build Windows installer
         run: npm run electron:build:win
-        
+      
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
