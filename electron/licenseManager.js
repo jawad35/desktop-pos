@@ -41,12 +41,21 @@ class LicenseManager {
     }
 
     // Save license
+    // In electron/licenseManager.js - update saveLicense
     saveLicense(licenseData) {
         try {
-            const encrypted = this.encrypt(JSON.stringify(licenseData));
+            const dataToSave = {
+                license_key: licenseData.license_key,
+                hardware_id: licenseData.hardware_id,
+                expiry_date: licenseData.expiry_date,
+                plan_type: licenseData.plan_type,
+                activated_at: licenseData.activated_at,
+                shop: licenseData.shop // Store shop data
+            };
+
+            const encrypted = this.encrypt(JSON.stringify(dataToSave));
             fs.writeFileSync(this.licensePath, encrypted);
 
-            // Also save last check timestamp
             const checkData = {
                 last_check: Date.now(),
                 total_uptime: 0
@@ -61,7 +70,6 @@ class LicenseManager {
         }
     }
 
-    // Load license
     loadLicense() {
         try {
             if (fs.existsSync(this.licensePath)) {
@@ -81,6 +89,8 @@ class LicenseManager {
             return null;
         }
     }
+
+
 
     // Check for clock tampering
     detectClockTampering() {
@@ -127,37 +137,37 @@ class LicenseManager {
     // Check if license is valid (offline)
     // In licenseManager.js - update isLicenseValid method
     // In licenseManager.js - update isLicenseValid method
-isLicenseValid(licenseData) {
-    if (!licenseData) return false;
-    
-    // Check for clock tampering
-    const tamperCheck = this.detectClockTampering();
-    if (tamperCheck.tampered) {
-        return false;
+    isLicenseValid(licenseData) {
+        if (!licenseData) return false;
+
+        // Check for clock tampering
+        const tamperCheck = this.detectClockTampering();
+        if (tamperCheck.tampered) {
+            return false;
+        }
+
+        const now = new Date();
+        const expiryDate = new Date(licenseData.expiry_date);
+
+        // Calculate time difference in seconds
+        const timeLeftMs = expiryDate.getTime() - now.getTime();
+        const timeLeftSeconds = Math.floor(timeLeftMs / 1000);
+        const isExpired = timeLeftMs < 0;
+
+        // Grace period: 30 seconds for testing
+        const gracePeriodSeconds = 30;
+        const expiredForSeconds = Math.abs(timeLeftSeconds);
+        const isGracePeriod = isExpired && expiredForSeconds <= gracePeriodSeconds;
+
+        console.log(`License check - Expired: ${isExpired}, Time left: ${timeLeftSeconds}s, Grace period: ${isGracePeriod}`);
+
+        if (isExpired && !isGracePeriod) {
+            return false; // Definitely expired (beyond grace period)
+        }
+
+        // Allow access during grace period or before expiry
+        return true;
     }
-    
-    const now = new Date();
-    const expiryDate = new Date(licenseData.expiry_date);
-    
-    // Calculate time difference in seconds
-    const timeLeftMs = expiryDate.getTime() - now.getTime();
-    const timeLeftSeconds = Math.floor(timeLeftMs / 1000);
-    const isExpired = timeLeftMs < 0;
-    
-    // Grace period: 30 seconds for testing
-    const gracePeriodSeconds = 30;
-    const expiredForSeconds = Math.abs(timeLeftSeconds);
-    const isGracePeriod = isExpired && expiredForSeconds <= gracePeriodSeconds;
-    
-    console.log(`License check - Expired: ${isExpired}, Time left: ${timeLeftSeconds}s, Grace period: ${isGracePeriod}`);
-    
-    if (isExpired && !isGracePeriod) {
-        return false; // Definitely expired (beyond grace period)
-    }
-    
-    // Allow access during grace period or before expiry
-    return true;
-}
 
     // Clear license
     clearLicense() {

@@ -28,7 +28,6 @@ import AdminDashboard from "./pages/admin";
 import { queryClient } from "./lib/queryClient";
 import ActivationScreen from "@/pages/activation";
 
-// Check if license is valid
 function useLicense() {
   const [isLicensed, setIsLicensed] = useState<boolean | null>(null);
   const [licenseData, setLicenseData] = useState<any>(null);
@@ -59,7 +58,7 @@ function Router() {
   const [location, setLocation] = useLocation();
   const { isLicensed } = useLicense();
 
-  // Wait for license check
+  // Don't force redirect - let the routes handle navigation
   if (isLicensed === null) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -71,52 +70,34 @@ function Router() {
     );
   }
 
-  // Check if we're on activation route
-  if (location === '/activation') {
-    return <ActivationScreen onActivated={() => {
-      // Force a complete reload after activation
-      window.location.href = '/';
-    }} />;
+  if (isLicensed === true) {
+    return (
+      <AppLayout>
+        <Switch>
+          <Route path="/" component={Home} />
+          <Route path="/pos" component={POS} />
+          <Route path="/products" component={Products} />
+          <Route path="/sales" component={Sales} />
+          <Route path="/returns" component={Returns} />
+          <Route path="/item-details/:id/:mode" component={ItemDetails} />
+          <Route path="/purchases" component={Purchases} />
+          <Route path="/suppliers" component={Suppliers} />
+          <Route path="/categories" component={Categories} />
+          <Route path="/transaction-logs" component={TransactionLogs} />
+          <Route path="/receipt-management" component={ReceiptManagement} />
+          <Route path="/expenses" component={Expenses} />
+          <Route path="/employees/:id" component={EmployeeDetails} />
+          <Route path="/employees" component={Employees} />
+          <Route path="/admin" component={AdminDashboard} />
+          <Route path="/settings" component={SettingsPage} />
+          <Route path="/profile" component={Profile} />
+          <Route component={isLicensed === true ? Home : NotFound} />
+        </Switch>
+      </AppLayout>
+    );
   }
 
-  // If not licensed and not on activation page, show activation
-  if (!isLicensed && location !== '/activation') {
-    return <ActivationScreen onActivated={() => {
-      window.location.href = '/';
-    }} />;
-  }
-
-  // Licensed - show main app
-  return (
-    <AppLayout>
-      <Switch>
-        <Route path="/" component={Home} />
-        <Route path="/pos" component={POS} />
-        <Route path="/products" component={Products} />
-        <Route path="/sales" component={Sales} />
-        <Route path="/returns" component={Returns} />
-        <Route path="/item-details/:id/:mode" component={ItemDetails} />
-        <Route path="/purchases" component={Purchases} />
-        <Route path="/suppliers" component={Suppliers} />
-        <Route path="/categories" component={Categories} />
-        <Route path="/transaction-logs" component={TransactionLogs} />
-        <Route path="/receipt-management" component={ReceiptManagement} />
-        <Route path="/expenses" component={Expenses} />
-        <Route path="/employees/:id" component={EmployeeDetails} />
-        <Route path="/employees" component={Employees} />
-        <Route path="/admin" component={AdminDashboard} />
-        <Route path="/settings" component={SettingsPage} />
-        <Route path="/profile" component={Profile} />
-        {/* Add a catch-all route that redirects to home */}
-        <Route path="*" component={() => {
-          useEffect(() => {
-            setLocation('/');
-          }, []);
-          return null;
-        }} />
-      </Switch>
-    </AppLayout>
-  );
+  return <ActivationScreen onActivated={() => window.location.reload()} />;
 }
 
 function App() {

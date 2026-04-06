@@ -3,8 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Key, CheckCircle, AlertCircle, Shield } from 'lucide-react';
-import { useLocation } from "wouter";
+import { Loader2, CheckCircle, AlertCircle, Shield } from 'lucide-react';
 
 interface ActivationProps {
     onActivated: () => void;
@@ -15,44 +14,55 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
     const { toast } = useToast();
-    const [, setLocation] = useLocation();
-    const handleActivate = async () => {
-        if (!licenseKey.trim()) {
-            setError('Please enter your license key');
-            return;
-        }
 
-        setIsLoading(true);
-        setError('');
+  const handleActivate = async () => {
+    console.log("🔍 [DEBUG] Activate button clicked");
+    console.log("🔍 [DEBUG] License key entered:", licenseKey);
+    
+    if (!licenseKey.trim()) {
+        setError('Please enter your license key');
+        return;
+    }
 
-        try {
-            const result = await window.electronAPI.activateLicense(licenseKey);
+    setIsLoading(true);
+    setError('');
 
-            if (result.success) {
-                toast({
-                    title: "Activation Successful! 🎉",
-                    description: `Your license is valid until ${new Date(result.expiry_date).toLocaleDateString()}`,
-                });
-                setLocation('/')
-            } else {
-                setError(result.message || 'Activation failed');
-                toast({
-                    title: "Activation Failed",
-                    description: result.message,
-                    variant: "destructive",
-                });
-            }
-        } catch (err: any) {
-            setError(err.message || 'Network error. Please check your internet connection.');
+    try {
+        console.log("🔍 [DEBUG] Calling electronAPI.activateLicense...");
+        const result = await window.electronAPI.activateLicense(licenseKey);
+        console.log("🔍 [DEBUG] Activation result:", result);
+
+        if (result.success) {
+            console.log("🔍 [DEBUG] Activation SUCCESS!");
             toast({
-                title: "Error",
-                description: err.message,
+                title: "Activation Successful! 🎉",
+                description: `Your license is valid until ${new Date(result.expiry_date).toLocaleDateString()}`,
+            });
+            
+            console.log("🔍 [DEBUG] Calling window.location.reload()");
+            window.location.reload();
+            
+        } else {
+            console.log("🔍 [DEBUG] Activation FAILED:", result.message);
+            setError(result.message || 'Activation failed');
+            toast({
+                title: "Activation Failed",
+                description: result.message,
                 variant: "destructive",
             });
-        } finally {
-            setIsLoading(false);
         }
-    };
+    } catch (err: any) {
+        console.error("🔍 [DEBUG] Activation error:", err);
+        setError(err.message || 'Network error. Please check your internet connection.');
+        toast({
+            title: "Error",
+            description: err.message,
+            variant: "destructive",
+        });
+    } finally {
+        setIsLoading(false);
+    }
+};
 
     return (
         <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-primary/5 to-secondary/5">
@@ -70,7 +80,7 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
                     <div>
                         <Input
                             type="text"
-                            placeholder="Enter license key (e.g., POS9-7H3K-M2L8-4N6P)"
+                            placeholder="Enter license key"
                             value={licenseKey}
                             onChange={(e) => {
                                 setLicenseKey(e.target.value.toUpperCase());
@@ -109,7 +119,6 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
                     <div className="text-center text-xs text-muted-foreground border-t pt-4 mt-4">
                         <p>Internet connection required for activation</p>
                         <p className="mt-1">After activation, the software works completely offline</p>
-                        <p className="mt-4 text-primary">Need help? Contact support at support@yourdomain.com</p>
                     </div>
                 </CardContent>
             </Card>

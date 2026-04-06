@@ -9,10 +9,13 @@
     "client": "vite",
     "server": "node server/index.js",
     "build": "vite build",
+    "rebuild": "electron-rebuild",
     "electron:dev": "npm run build && electron .",
     "electron:build": "npm run build && electron-builder",
     "electron:build:mac": "npm run build && electron-builder --mac",
-    "electron:build:win": "npm run build && electron-builder --win"
+    "electron:build:win": "npm run build && electron-builder --win --x64",
+    "postinstall": "electron-builder install-app-deps",
+    "rebuild:win": "electron-rebuild --platform=win32 --arch=x64"
   },
   "build": {
     "appId": "com.desktop.pos",
@@ -25,7 +28,6 @@
     "files": [
       "electron/**/*",
       "client/dist/**/*",
-      "server/**/*",
       "node_modules/**/*"
     ],
     "mac": {
@@ -34,54 +36,29 @@
       "target": [
         {
           "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "arch": ["x64", "arm64"]
         }
       ],
-      "icon": "build/icon.icns",
-      "hardenedRuntime": false,
-      "gatekeeperAssess": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist"
-    },
-    "dmg": {
-      "title": "POS Desktop App",
-      "icon": "build/icon.icns",
-      "contents": [
-        {
-          "x": 410,
-          "y": 220,
-          "type": "link",
-          "path": "/Applications"
-        },
-        {
-          "x": 130,
-          "y": 220,
-          "type": "file"
-        }
-      ],
-      "window": {
-        "width": 540,
-        "height": 380
-      }
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
       "icon": "build/icon.ico"
     },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true
+    },
     "linux": {
-      "target": [
-        "AppImage"
-      ],
+      "target": ["AppImage"],
       "category": "Office"
     }
   },
@@ -142,6 +119,7 @@
     "concurrently": "^9.2.1",
     "electron": "^41.1.0",
     "electron-builder": "^26.8.1",
+    "electron-rebuild": "^3.2.9",
     "nodemon": "^3.1.14",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.10",

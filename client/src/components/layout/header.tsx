@@ -95,7 +95,10 @@ export function Header({ title, subtitle, onMenuClick }: HeaderProps) {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (window.electronAPI && window.electronAPI.clearLicense) {
+      await window.electronAPI.clearLicense();
+    }
     localStorage.removeItem("token");
     window.location.href = "/";
   };

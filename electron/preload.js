@@ -1,6 +1,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+
+    
+
+    // Add to preload.js
+    getShopData: async () => {
+        return await ipcRenderer.invoke('license:getShop');
+    },
     // ========== PRODUCTS ==========
     getProducts: async (filters) => {
         console.log('Preload - getProducts called with filters:', filters);

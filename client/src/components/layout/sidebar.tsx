@@ -39,7 +39,7 @@ const navigation = [
   { name: "Employees", href: "/employees", icon: Users2, title: "Employees", subtitle: "Manage employees, attendance and salaries" }, // Add this line
   // { name: "Orders", href: "/orders", icon: Users2, title: "Orders", subtitle: "Manage orders, attendance and salaries" }, // Add this line
   { name: "Admin", href: "/admin", icon: Users2, title: "Admin", subtitle: "Manage admin, attendance and salaries" }, // Add this line
-  // { name: "Profile", href: "/profile", icon: UserCircle, title: "Profile", subtitle: "See Shop Details" },
+  { name: "Profile", href: "/profile", icon: UserCircle, title: "Profile", subtitle: "See Shop Details" },
   // { name: "Settings", href: "/settings", icon: Settings, title: "Settings", subtitle: "Manage Discount and Tax" },
 
 ];
