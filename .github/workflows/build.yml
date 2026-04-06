@@ -2,7 +2,7 @@ name: Build Windows EXE
 
 on:
   push:
-    branches: [main, master]
+    branches: [window-setup]
   workflow_dispatch:  # Allows manual trigger from GitHub UI
 
 jobs:
