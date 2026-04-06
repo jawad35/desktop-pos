@@ -3,7 +3,7 @@ name: Build Windows EXE
 on:
   push:
     branches: [window-setup]
-  workflow_dispatch:  # Allows manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build:
@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'  # Changed from 18 to 22
           
       - name: Install dependencies
         run: npm install
