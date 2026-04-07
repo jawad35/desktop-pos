@@ -4,7 +4,7 @@ import { generateHardwareId } from './hardwareId.js';
 import licenseManager from './licenseManager.js';
 
 // Use your local server URL for development
-const API_URL = 'http://localhost:5002/api';  // Changed from 3000 to 5002
+const API_URL = 'http://192.168.10.3:5002/api';  // Changed from 3000 to 5002
 
 export function setupLicenseHandlers() {
 

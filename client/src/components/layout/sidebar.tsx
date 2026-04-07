@@ -1,6 +1,5 @@
 "use client";
 
-import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import {
   BarChart3,
@@ -22,6 +21,7 @@ import {
 } from "lucide-react";
 import { useHeader } from "@/contexts/HeaderContext";
 import { useAuth } from "@/hooks/useAuth";
+import { useNavigation } from "../../App"; // Import the navigation hook
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: ChartLine, title: "Dashboard", subtitle: "Overview of your business" },
@@ -32,18 +32,11 @@ const navigation = [
   { name: "Purchases", href: "/purchases", icon: ShoppingCart, title: "Purchases", subtitle: "Record purchase orders" },
   { name: "Suppliers", href: "/suppliers", icon: Truck, title: "Suppliers", subtitle: "Manage supplier information" },
   { name: "Categories", href: "/categories", icon: Tags, title: "Categories", subtitle: "Organize your products with categories and brands" },
-  // { name: "Reports", href: "/reports", icon: BarChart3, title: "Reports", subtitle: "Business performance insights" },
-  // { name: "Transaction Logs", href: "/transaction-logs", icon: History, title: "Transaction Logs", subtitle: "Audit system transactions" },
-  // { name: "Receipt Management", href: "/receipt-management", icon: FileText, title: "Receipt Management", subtitle: "Manage receipts and invoices" },
   { name: "Expenses", href: "/expenses", icon: Calculator, title: "Expenses", subtitle: "Track business expenses" },
-  { name: "Employees", href: "/employees", icon: Users2, title: "Employees", subtitle: "Manage employees, attendance and salaries" }, // Add this line
-  // { name: "Orders", href: "/orders", icon: Users2, title: "Orders", subtitle: "Manage orders, attendance and salaries" }, // Add this line
-  { name: "Admin", href: "/admin", icon: Users2, title: "Admin", subtitle: "Manage admin, attendance and salaries" }, // Add this line
+  { name: "Employees", href: "/employees", icon: Users2, title: "Employees", subtitle: "Manage employees, attendance and salaries" },
+  { name: "Admin", href: "/admin", icon: Users2, title: "Admin", subtitle: "Manage admin, attendance and salaries" },
   { name: "Profile", href: "/profile", icon: UserCircle, title: "Profile", subtitle: "See Shop Details" },
-  // { name: "Settings", href: "/settings", icon: Settings, title: "Settings", subtitle: "Manage Discount and Tax" },
-
 ];
-
 
 interface SidebarProps {
   isOpen: boolean;
@@ -51,11 +44,9 @@ interface SidebarProps {
 }
 
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
-  const [location] = useLocation();
   const { setTitle, setSubtitle } = useHeader();
   const { expiryDate, shop, user } = useAuth();
-  
-
+  const { currentPath, navigateTo } = useNavigation(); // Use the navigation hook
 
   return (
     <>
@@ -98,7 +89,6 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           </div>
         </div>
 
-
         {/* Scrollable navigation */}
         <div className="flex-1 overflow-y-auto">
           <nav className="p-4">
@@ -106,31 +96,29 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               {navigation.map((item) => {
                 if (item.name === "Admin" && user?.role !== "admin") return null;
 
-                const isActive = location === item.href;
+                const isActive = currentPath === item.href;
                 return (
                   <li key={item.name}>
-                    <Link href={item.href}>
-                      <a
-                        className={cn(
-                          "flex items-center space-x-3 p-3 rounded-lg transition-colors",
-                          isActive
-                            ? "bg-primary text-primary-foreground"
-                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                        )}
-                        onClick={() => {
-                          setTitle(item.title);
-                          setSubtitle(item.subtitle);
-                          onClose();
-                        }}
-                      >
-                        <item.icon className="h-5 w-5" />
-                        <span>{item.name}</span>
-                      </a>
-                    </Link>
+                    <div
+                      className={cn(
+                        "flex items-center space-x-3 p-3 rounded-lg transition-colors cursor-pointer",
+                        isActive
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      )}
+                      onClick={() => {
+                        navigateTo(item.href); // Use navigateTo instead of Link
+                        setTitle(item.title);
+                        setSubtitle(item.subtitle);
+                        onClose();
+                      }}
+                    >
+                      <item.icon className="h-5 w-5" />
+                      <span>{item.name}</span>
+                    </div>
                   </li>
                 );
               })}
-
             </ul>
           </nav>
         </div>
@@ -141,7 +129,6 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">Subscription</p>
-                {/* <p className="text-xs text-muted-foreground">Expires: {new Date(expiryDate).toISOString().split("T")[0]}</p> */}
               </div>
               <div className="w-2 h-2 bg-secondary rounded-full"></div>
             </div>
