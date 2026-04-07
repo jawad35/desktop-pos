@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
 
-    
+
 
     // Add to preload.js
     getShopData: async () => {
@@ -315,6 +315,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Utility
     onDatabaseUpdate: (callback) => {
         ipcRenderer.on('db:updated', (event, data) => callback(data));
-    }
+    },
+
+    // Add to preload.js
+    getDatabaseInfo: async () => {
+        return await ipcRenderer.invoke('db:getInfo');
+    },
+    exportDatabase: async () => {
+        return await ipcRenderer.invoke('db:export');
+    },
+    importDatabase: async (filePath) => {
+        return await ipcRenderer.invoke('db:import', filePath);
+    },
 
 });

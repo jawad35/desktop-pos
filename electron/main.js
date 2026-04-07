@@ -147,8 +147,8 @@ export function createActivationWindow() {
         }
         
         activationWindow = new BrowserWindow({
-            width: 550,
-            height: 650,
+            width: 1400,
+            height: 900,
             resizable: false,
             webPreferences: {
                 nodeIntegration: false,

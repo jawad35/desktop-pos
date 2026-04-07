@@ -120,4 +120,76 @@ export function setupLicenseHandlers() {
 
         return { success: true };
     });
+
+    // Database management handlers
+    ipcMain.handle('db:getInfo', async () => {
+        try {
+            const db = getDb();
+            const dbPath = db.name; // Get database file path
+            const stats = fs.statSync(dbPath);
+
+            // Check for last backup (you can store this in a separate file or settings)
+            let lastBackup = null;
+            const backupInfoPath = path.join(path.dirname(dbPath), 'backup_info.json');
+            if (fs.existsSync(backupInfoPath)) {
+                const info = JSON.parse(fs.readFileSync(backupInfoPath, 'utf8'));
+                lastBackup = info.lastBackup;
+            }
+
+            return {
+                success: true,
+                size: (stats.size / (1024 * 1024)).toFixed(2) + ' MB',
+                lastBackup: lastBackup
+            };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('db:export', async () => {
+        try {
+            const db = getDb();
+            const sourcePath = db.name;
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const backupDir = path.join(app.getPath('documents'), 'POS Backups');
+
+            if (!fs.existsSync(backupDir)) {
+                fs.mkdirSync(backupDir, { recursive: true });
+            }
+
+            const destPath = path.join(backupDir, `pos_backup_${timestamp}.db`);
+            fs.copyFileSync(sourcePath, destPath);
+
+            // Update backup info
+            const backupInfoPath = path.join(path.dirname(sourcePath), 'backup_info.json');
+            fs.writeFileSync(backupInfoPath, JSON.stringify({ lastBackup: new Date().toISOString() }));
+
+            return { success: true, path: destPath };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('db:import', async (event, filePath) => {
+        try {
+            const db = getDb();
+            const targetPath = db.name;
+
+            // Validate file exists
+            if (!fs.existsSync(filePath)) {
+                return { success: false, error: 'File not found' };
+            }
+
+            // Create backup of current database before import
+            const backupPath = targetPath + '.backup';
+            fs.copyFileSync(targetPath, backupPath);
+
+            // Replace database
+            fs.copyFileSync(filePath, targetPath);
+
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
 }
