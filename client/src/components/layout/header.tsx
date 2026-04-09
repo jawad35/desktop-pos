@@ -53,12 +53,12 @@ export function Header({ title, subtitle, onMenuClick }: HeaderProps) {
           const graceRemaining = Math.max(0, gracePeriodSeconds - secondsExpired);
           const isGracePeriod = isExpired && graceRemaining > 0;
 
-          console.log('Debug values:', {
-            isExpired,
-            secondsExpired,
-            graceRemaining,
-            isGracePeriod
-          });
+          // console.log('Debug values:', {
+          //   isExpired,
+          //   secondsExpired,
+          //   graceRemaining,
+          //   isGracePeriod
+          // });
 
           // If graceRemaining becomes 0, redirect
           if (isExpired && graceRemaining === 0 && !hasRedirected.current) {

@@ -44,6 +44,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return result.success;
     },
 
+    // Add to preload.js
+    createDamagedStock: async (damageData) => {
+        const result = await ipcRenderer.invoke('db:createDamagedStock', damageData);
+        return result.success ? result.data : null;
+    },
+    getDamagedStock: async (filters) => {
+        const result = await ipcRenderer.invoke('db:getDamagedStock', filters);
+        return result.success ? result.data : [];
+    },
+    updateDamagedStock: async (id, updateData) => {
+        const result = await ipcRenderer.invoke('db:updateDamagedStock', id, updateData);
+        return result.success;
+    },
+    getDamageStats: async () => {
+        const result = await ipcRenderer.invoke('db:getDamageStats');
+        return result.success ? result.data : null;
+    },
+
     // Product Images
     getProductImages: async (productId) => {
         const result = await ipcRenderer.invoke('db:getProductImages', productId);
@@ -140,8 +158,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return result.success ? result.data : null;
     },
     getSaleByReceiptNumber: async (receiptNumber) => {
+        try {
         const result = await ipcRenderer.invoke('db:getSaleByReceiptNumber', receiptNumber);
-        return result.success ? result.data : null;
+        console.log('getSaleByReceiptNumber result:', result);
+        
+        // If result is null or has success false
+        if (!result) {
+            return null;
+        }
+        
+        // If result has success property (old format)
+        if (result.success === false) {
+            return null;
+        }
+        
+        // If result has data property, return that, otherwise return result
+        return result.data || result;
+    } catch (error) {
+        console.error('Error in getSaleByReceiptNumber:', error);
+        return null;
+    }
     },
     getSaleItems: async (saleId) => {
         const result = await ipcRenderer.invoke('db:getSaleItems', saleId);
@@ -158,6 +194,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateSale: async (id, saleData) => {
         console.log(id, saleData, 'aho aho')
         const result = await ipcRenderer.invoke('db:updateSale', id, saleData);
+        console.log(result,'pta chal gya')
         return result;
     },
 
@@ -274,11 +311,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // ========== SETTINGS ==========
     getSettings: async () => {
         const result = await ipcRenderer.invoke('db:getSettings');
-        return result.success ? result.data : null;
+        return result;
     },
     updateSettings: async (settings) => {
+        console.log(settings,'han wai ki')
         const result = await ipcRenderer.invoke('db:updateSettings', settings);
-        return result.success;
+        return result;
     },
     getTransactionLogs: async () => {
         console.log('calling213')
@@ -322,10 +360,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return await ipcRenderer.invoke('db:getInfo');
     },
     exportDatabase: async () => {
-        return await ipcRenderer.invoke('db:export');
+        console.log("🔍 [PRELOAD] exportDatabase called");
+        const result = await ipcRenderer.invoke('db:export');
+        console.log("🔍 [PRELOAD] exportDatabase result:", result);
+
+        if (result.success && result.data) {
+            // Convert array back to Uint8Array and trigger download
+            const uint8Array = new Uint8Array(result.data);
+            const blob = new Blob([uint8Array], { type: 'application/x-sqlite3' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = result.fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            return { success: true, path: result.fileName };
+        }
+
+        return result;
     },
-    importDatabase: async (filePath) => {
-        return await ipcRenderer.invoke('db:import', filePath);
+    importDatabase: async (fileData) => {
+        console.log("🔍 [PRELOAD] importDatabase called with data length:", fileData?.length);
+        const result = await ipcRenderer.invoke('db:import', fileData);
+        console.log("🔍 [PRELOAD] importDatabase result:", result);
+        return result;
+    },
+
+    restartApp: async () => {
+        return await ipcRenderer.invoke('app:restart');
     },
 
 });

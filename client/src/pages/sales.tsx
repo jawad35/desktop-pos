@@ -28,7 +28,9 @@ export default function Sales() {
 
   const pageSize = 50;
   const [page, setPage] = useState(1);
-  
+
+
+
   const { data: sales = [], isLoading, refetch } = useQuery<any[]>({
     queryKey: ["sales", filters, page],
     queryFn: async () => {
@@ -80,47 +82,48 @@ export default function Sales() {
       return paginated;
     },
     keepPreviousData: true,
+
   });
 
   const handleExport = async () => {
     try {
       const result = await api.getSales();
       let allSales = [];
-      
+
       if (Array.isArray(result)) {
         allSales = result;
       } else if (result?.success && Array.isArray(result.data)) {
         allSales = result.data;
       }
-      
+
       let filtered = allSales;
-      
+
       if (filters.search) {
         const search = filters.search.toLowerCase();
-        filtered = filtered.filter(sale => 
+        filtered = filtered.filter(sale =>
           sale.receipt_number?.toLowerCase().includes(search) ||
           sale.customer_name?.toLowerCase().includes(search)
         );
       }
       if (filters.startDate) {
-        filtered = filtered.filter(sale => 
+        filtered = filtered.filter(sale =>
           new Date(sale.created_at) >= new Date(filters.startDate)
         );
       }
       if (filters.endDate) {
-        filtered = filtered.filter(sale => 
+        filtered = filtered.filter(sale =>
           new Date(sale.created_at) <= new Date(filters.endDate)
         );
       }
       if (filters.paymentMethod && filters.paymentMethod !== 'all') {
-        filtered = filtered.filter(sale => 
+        filtered = filtered.filter(sale =>
           sale.payment_method === filters.paymentMethod
         );
       }
-      
+
       const headers = ['Receipt No', 'Date', 'Customer Name', 'Customer Phone', 'Subtotal', 'Tax', 'Total', 'Payment Method', 'Status'];
       const csvRows = [headers];
-      
+
       for (const sale of filtered) {
         csvRows.push([
           sale.receipt_number || '',
@@ -134,7 +137,7 @@ export default function Sales() {
           sale.payment_status || ''
         ]);
       }
-      
+
       const csvContent = csvRows.map(row => row.join(',')).join('\n');
       const blob = new Blob([csvContent], { type: 'text/csv' });
       const url = window.URL.createObjectURL(blob);
@@ -145,7 +148,7 @@ export default function Sales() {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      
+
       toast({
         title: "Export Successful",
         description: "Sales data has been exported to CSV",
@@ -159,6 +162,15 @@ export default function Sales() {
       });
     }
   };
+
+  useEffect(() => {
+    refetch();
+  }, []);
+
+  // Also add this to refresh when page changes
+  useEffect(() => {
+    refetch();
+  }, [page, filters]);
 
   const handleViewDetails = (saleId: string) => {
     const state = "sales"
@@ -180,12 +192,26 @@ export default function Sales() {
   };
 
   const columns = [
-    {
-      key: 'receipt_number' as const,
-      label: 'Receipt No.',
-      render: (value: string) => (
-        <span className="font-medium text-primary font-mono">#{value}</span>
-      ),
+       {
+        key: 'receipt_number' as const,
+        label: 'Receipt No.',
+        render: (value: string) => (
+            <span 
+                className="font-medium text-primary font-mono cursor-pointer hover:underline"
+                onClick={(e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(value);
+                    toast({ 
+                        title: "Copied!", 
+                        description: `Receipt ${value} copied to clipboard`,
+                        duration: 1500
+                    });
+                }}
+                title="Click to copy receipt number"
+            >
+                {value}
+            </span>
+        ),
     },
     {
       key: 'created_at' as const,
@@ -197,18 +223,18 @@ export default function Sales() {
         </div>
       ),
     },
-    {
-      key: 'customer_name' as const,
-      label: 'Customer',
-      render: (value: string, row: any) => (
-        <div>
-          <p className="text-sm">{value || 'Walk-in Customer'}</p>
-          {row.customer_phone && (
-            <p className="text-xs text-muted-foreground">{row.customer_phone}</p>
-          )}
-        </div>
-      ),
-    },
+    // {
+    //   key: 'customer_name' as const,
+    //   label: 'Customer',
+    //   render: (value: string, row: any) => (
+    //     <div>
+    //       <p className="text-sm">{value || 'Walk-in Customer'}</p>
+    //       {row.customer_phone && (
+    //         <p className="text-xs text-muted-foreground">{row.customer_phone}</p>
+    //       )}
+    //     </div>
+    //   ),
+    // },
     {
       key: 'total' as const,
       label: 'Amount',
@@ -223,6 +249,31 @@ export default function Sales() {
         <Badge className={getPaymentMethodColor(value)} variant="secondary">
           {value?.toUpperCase() || '-'}
         </Badge>
+      ),
+    },
+    {
+      key: 'return_status' as const,
+      label: 'Return Status',
+      render: (value: string) => {
+        switch (value) {
+          case 'full':
+            return <Badge className="bg-red-500 text-white whitespace-nowrap">Fully Returned</Badge>;
+          case 'partial':
+            return <Badge className="bg-yellow-500 text-white whitespace-nowrap">Partially Returned</Badge>;
+          case 'none':
+            return <Badge variant="outline" className="whitespace-nowrap">No Return</Badge>;
+          default:
+            return <Badge variant="outline" className="whitespace-nowrap">No Return</Badge>;
+        }
+      },
+    },
+    {
+      key: 'total_returned_amount' as const,
+      label: 'Returned Amount',
+      render: (value: number) => (
+        <span className="text-destructive font-semibold">
+          {value && value > 0 ? formatPKR(value) : '-'}
+        </span>
       ),
     },
     {

@@ -159,7 +159,7 @@ class LicenseManager {
         const expiredForSeconds = Math.abs(timeLeftSeconds);
         const isGracePeriod = isExpired && expiredForSeconds <= gracePeriodSeconds;
 
-        console.log(`License check - Expired: ${isExpired}, Time left: ${timeLeftSeconds}s, Grace period: ${isGracePeriod}`);
+        // console.log(`License check - Expired: ${isExpired}, Time left: ${timeLeftSeconds}s, Grace period: ${isGracePeriod}`);
 
         if (isExpired && !isGracePeriod) {
             return false; // Definitely expired (beyond grace period)

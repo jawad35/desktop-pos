@@ -699,6 +699,172 @@ export function setupIpcHandlers() {
         }
     });
 
+    // Create damaged stock record
+    ipcMain.handle('db:createDamagedStock', async (event, damageData) => {
+        try {
+            const db = getDb();
+            const id = crypto.randomUUID();
+
+            const stmt = db.prepare(`
+            INSERT INTO damaged_stock (
+                id, product_id, product_name, sku, original_sale_id, return_id,
+                quantity, original_cost_price, selling_price, total_loss,
+                damage_reason, notes, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+            stmt.run(
+                id,
+                damageData.product_id,
+                damageData.product_name,
+                damageData.sku,
+                damageData.original_sale_id || null,
+                damageData.return_id || null,
+                damageData.quantity,
+                damageData.original_cost_price,
+                damageData.selling_price,
+                damageData.quantity * damageData.original_cost_price, // total_loss
+                damageData.damage_reason || null,
+                damageData.notes || null,
+                'pending'
+            );
+
+            const newDamage = db.prepare('SELECT * FROM damaged_stock WHERE id = ?').get(id);
+            return { success: true, data: newDamage };
+        } catch (error) {
+            console.error('Error in createDamagedStock:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Get damaged stock with filters
+    ipcMain.handle('db:getDamagedStock', async (event, filters = {}) => {
+        try {
+            const db = getDb();
+            let query = 'SELECT * FROM damaged_stock WHERE 1=1';
+            const params = [];
+
+            if (filters.search) {
+                query += ' AND (product_name LIKE ? OR sku LIKE ?)';
+                params.push(`%${filters.search}%`, `%${filters.search}%`);
+            }
+
+            if (filters.status && filters.status !== 'all') {
+                query += ' AND status = ?';
+                params.push(filters.status);
+            }
+
+            if (filters.dateFrom) {
+                query += ' AND created_at >= ?';
+                params.push(filters.dateFrom);
+            }
+
+            if (filters.dateTo) {
+                query += ' AND created_at <= ?';
+                params.push(filters.dateTo);
+            }
+
+            query += ' ORDER BY created_at DESC';
+
+            const damages = db.prepare(query).all(...params);
+            return { success: true, data: damages };
+        } catch (error) {
+            console.error('Error in getDamagedStock:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+
+    // Update damaged stock status (fulfill or recycle)
+    ipcMain.handle('db:updateDamagedStock', async (event, id, updateData) => {
+        try {
+            const db = getDb();
+            const updates = [];
+            const params = [];
+
+            if (updateData.status !== undefined) {
+                updates.push('status = ?');
+                params.push(updateData.status);
+            }
+
+            if (updateData.recovery_notes !== undefined) {
+                updates.push('recovery_notes = ?');
+                params.push(updateData.recovery_notes);
+            }
+
+            if (updateData.status === 'fulfilled') {
+                updates.push('recovery_date = CURRENT_TIMESTAMP');
+            }
+
+            if (updates.length === 0) {
+                return { success: false, error: 'No fields to update' };
+            }
+
+            updates.push('updated_at = CURRENT_TIMESTAMP');
+            params.push(id);
+
+            const query = `UPDATE damaged_stock SET ${updates.join(', ')} WHERE id = ?`;
+            const result = db.prepare(query).run(...params);
+
+            // If status is 'fulfilled', also add stock back to products
+            if (updateData.status === 'fulfilled' && result.changes > 0) {
+                const damage = db.prepare('SELECT * FROM damaged_stock WHERE id = ?').get(id);
+                if (damage) {
+                    db.prepare(`
+                    UPDATE products 
+                    SET stock = stock + ?, updated_at = CURRENT_TIMESTAMP 
+                    WHERE id = ?
+                `).run(damage.quantity, damage.product_id);
+                }
+            }
+
+            return { success: result.changes > 0 };
+        } catch (error) {
+            console.error('Error in updateDamagedStock:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Get damage statistics
+    ipcMain.handle('db:getDamageStats', async () => {
+        try {
+            const db = getDb();
+
+            const totalLoss = db.prepare(`
+            SELECT COALESCE(SUM(total_loss), 0) as total FROM damaged_stock
+        `).get();
+
+            const pendingLoss = db.prepare(`
+            SELECT COALESCE(SUM(total_loss), 0) as total FROM damaged_stock WHERE status = 'pending'
+        `).get();
+
+            const pendingCount = db.prepare(`
+            SELECT COUNT(*) as count FROM damaged_stock WHERE status = 'pending'
+        `).get();
+
+            const fulfilledCount = db.prepare(`
+            SELECT COUNT(*) as count FROM damaged_stock WHERE status = 'fulfilled'
+        `).get();
+
+            const recycledCount = db.prepare(`
+            SELECT COUNT(*) as count FROM damaged_stock WHERE status = 'recycled'
+        `).get();
+
+            return {
+                success: true,
+                data: {
+                    totalLoss: totalLoss.total,
+                    pendingLoss: pendingLoss.total,
+                    pendingCount: pendingCount.count,
+                    fulfilledCount: fulfilledCount.count,
+                    recycledCount: recycledCount.count
+                }
+            };
+        } catch (error) {
+            console.error('Error in getDamageStats:', error);
+            return { success: false, error: error.message };
+        }
+    });
     // ========== PRODUCT IMAGES ==========
     ipcMain.handle('db:getProductImages', async (event, productId) => {
         try {
@@ -895,13 +1061,39 @@ export function setupIpcHandlers() {
         }
     });
 
+    // In ipcHandlers.js, add this handler if missing:
     ipcMain.handle('db:getSaleByReceiptNumber', async (event, receiptNumber) => {
         try {
             const db = getDb();
             const sale = db.prepare('SELECT * FROM sales WHERE receipt_number = ?').get(receiptNumber);
-            return { success: true, data: sale };
+
+            if (!sale) {
+                return null;  // Return null directly, not { success: false }
+            }
+
+            // Parse returned_items if it exists
+            if (sale.returned_items && typeof sale.returned_items === 'string') {
+                sale.returned_items = JSON.parse(sale.returned_items);
+            } else if (!sale.returned_items) {
+                sale.returned_items = [];
+            }
+
+            // Get sale items
+            const items = db.prepare(`
+            SELECT si.*, p.name as product_name, p.image_url, p.barcode
+            FROM sale_items si
+            LEFT JOIN products p ON si.product_id = p.id
+            WHERE si.sale_id = ?
+        `).all(sale.id);
+
+            sale.items = items;
+
+            console.log("🔍 [IPC] Sale found - returned_items:", sale.returned_items);
+
+            return sale;  // Return the sale object directly
         } catch (error) {
-            return { success: false, error: error.message };
+            console.error('Error in getSaleByReceiptNumber:', error);
+            throw error;  // Throw error so frontend catches it
         }
     });
 
@@ -939,18 +1131,97 @@ export function setupIpcHandlers() {
         }
     });
 
+    // In your electron API (main process)
     ipcMain.handle('db:updateSale', async (event, id, saleData) => {
+        console.log("🔍 [IPC] updateSale called with id:", id);
+        console.log("🔍 [IPC] updateSale data:", JSON.stringify(saleData, null, 2));
+
         try {
             const db = getDb();
-            const updates = [];
-            const params = [];
-            if (saleData.paymentStatus !== undefined) { updates.push('payment_status = ?'); params.push(saleData.paymentStatus); }
-            if (saleData.employeeId !== undefined) { updates.push('employee_id = ?'); params.push(saleData.employeeId); }
-            if (updates.length === 0) return { success: false, error: 'No fields to update' };
-            params.push(id);
-            const result = db.prepare(`UPDATE sales SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-            return { success: result.changes > 0 };
+
+            // Start transaction
+            const transaction = db.transaction(() => {
+                // Update sales table
+                const updates = [];
+                const params = [];
+
+                if (saleData.paymentStatus !== undefined) {
+                    updates.push('payment_status = ?');
+                    params.push(saleData.paymentStatus);
+                }
+                if (saleData.employeeId !== undefined) {
+                    updates.push('employee_id = ?');
+                    params.push(saleData.employeeId);
+                }
+                if (saleData.subtotal !== undefined) {
+                    updates.push('subtotal = ?');
+                    params.push(saleData.subtotal);
+                }
+                if (saleData.total !== undefined) {
+                    updates.push('total = ?');
+                    params.push(saleData.total);
+                }
+                if (saleData.return_status !== undefined) {
+                    updates.push('return_status = ?');
+                    params.push(saleData.return_status);
+                }
+                if (saleData.total_returned_amount !== undefined) {
+                    updates.push('total_returned_amount = ?');
+                    params.push(saleData.total_returned_amount);
+                }
+                if (saleData.returned_items !== undefined) {
+                    updates.push('returned_items = ?');
+                    params.push(saleData.returned_items);
+                }
+
+                if (updates.length > 0) {
+                    updates.push('updated_at = CURRENT_TIMESTAMP');
+                    params.push(id);
+                    const query = `UPDATE sales SET ${updates.join(', ')} WHERE id = ?`;
+                    db.prepare(query).run(...params);
+                }
+
+                // Update sale_items if provided
+                if (saleData.items !== undefined && Array.isArray(saleData.items)) {
+                    // First, delete all existing items for this sale
+                    db.prepare('DELETE FROM sale_items WHERE sale_id = ?').run(id);
+
+                    // Then insert the updated items
+                    const insertStmt = db.prepare(`
+                    INSERT INTO sale_items (id, sale_id, product_id, quantity, unit_price, total)
+                    VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, ?)
+                `);
+
+                    for (const item of saleData.items) {
+                        insertStmt.run(
+                            id,
+                            item.product_id,
+                            item.quantity,
+                            item.unit_price,
+                            item.total
+                        );
+                    }
+                }
+            });
+
+            transaction();
+
+            // Fetch and return updated sale with items
+            const updatedSale = db.prepare('SELECT * FROM sales WHERE id = ?').get(id);
+            const updatedItems = db.prepare(`
+            SELECT si.*, p.name as product_name, p.barcode 
+            FROM sale_items si
+            JOIN products p ON si.product_id = p.id
+            WHERE si.sale_id = ?
+        `).all(id);
+
+            updatedSale.items = updatedItems;
+
+            console.log("🔍 [IPC] Updated sale with items:", updatedSale);
+            return { success: true, data: updatedSale };
+
         } catch (error) {
+            console.error("🔍 [IPC] Error in updateSale:", error);
             return { success: false, error: error.message };
         }
     });
@@ -975,22 +1246,51 @@ export function setupIpcHandlers() {
         const db = getDb();
         const id = crypto.randomUUID();
         const receiptNumber = returnData.receiptNumber || `RET-${Date.now()}`;
+
         try {
             db.exec('BEGIN TRANSACTION');
-            const returnStmt = db.prepare(`INSERT INTO returns (id, receipt_number, original_sale_id, customer_name, customer_phone, subtotal, tax, discount, return_fee, total, return_reason, payment_method, payment_status, account_number, user_id, shop_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-            returnStmt.run(id, receiptNumber, returnData.originalSaleId, returnData.customerName, returnData.customerPhone, returnData.subtotal, returnData.tax || 0, returnData.discount || 0, returnData.returnFee || 0, returnData.total, returnData.returnReason, returnData.paymentMethod || 'cash', returnData.paymentStatus || 'completed', returnData.accountNumber, returnData.userId, returnData.shopId);
-            const itemStmt = db.prepare(`INSERT INTO return_items (id, return_id, product_id, quantity, unit_price, total) VALUES (?, ?, ?, ?, ?, ?)`);
-            const updateStock = db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?');
+
+            // Insert return record
+            const returnStmt = db.prepare(`
+            INSERT INTO returns (
+                id, receipt_number, original_sale_id, customer_name, customer_phone,
+                subtotal, tax, discount, return_fee, total, return_reason,
+                payment_method, payment_status, account_number, user_id, shop_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+            returnStmt.run(
+                id, receiptNumber, returnData.originalSaleId, returnData.customerName,
+                returnData.customerPhone, returnData.subtotal, returnData.tax || 0,
+                returnData.discount || 0, returnData.returnFee || 0, returnData.total,
+                returnData.returnReason, returnData.paymentMethod || 'cash',
+                returnData.paymentStatus || 'completed', returnData.accountNumber,
+                returnData.userId, returnData.shopId
+            );
+
+            // Insert return items and RESTORE stock
+            const itemStmt = db.prepare(`
+            INSERT INTO return_items (id, return_id, product_id, quantity, unit_price, total)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `);
+
+            const updateStock = db.prepare(`
+            UPDATE products SET stock = stock + ? WHERE id = ?
+        `);
+
             for (const item of items) {
                 const itemId = crypto.randomUUID();
                 itemStmt.run(itemId, id, item.productId, item.quantity, item.unitPrice, item.total);
-                updateStock.run(item.quantity, item.productId);
+                updateStock.run(item.quantity, item.productId); // Add stock back
             }
+
             db.exec('COMMIT');
+
             const newReturn = db.prepare('SELECT * FROM returns WHERE id = ?').get(id);
             return { success: true, data: newReturn };
         } catch (error) {
             db.exec('ROLLBACK');
+            console.error('Error in createReturn:', error);
             return { success: false, error: error.message };
         }
     });
@@ -1437,23 +1737,87 @@ export function setupIpcHandlers() {
     ipcMain.handle('db:getSettings', async () => {
         try {
             const db = getDb();
-            const settings = db.prepare('SELECT * FROM settings WHERE id = "default"').get();
+            // Use single quotes for string literals in SQLite
+            const settings = db.prepare("SELECT * FROM settings WHERE id = 'default'").get();
+
+            console.log('🔍 [GET SETTINGS] Raw settings from DB:', settings);
+
+            // If no settings found, create default
+            if (!settings) {
+                console.log('🔍 [GET SETTINGS] No settings found, creating default...');
+                const insertStmt = db.prepare(`
+                INSERT INTO settings (id, tax, discount) 
+                VALUES ('default', 0, 0)
+            `);
+                insertStmt.run();
+
+                // Fetch again after insert
+                const newSettings = db.prepare("SELECT * FROM settings WHERE id = 'default'").get();
+                console.log('🔍 [GET SETTINGS] Created default settings:', newSettings);
+                return { success: true, data: newSettings };
+            }
+
             return { success: true, data: settings };
         } catch (error) {
-            return { success: false, error: error.message };
+            console.error('🔍 [GET SETTINGS] Error:', error);
+            return { success: false, error: error.message, data: { tax: 0, discount: 0 } };
         }
     });
 
-    ipcMain.handle('db:updateSettings', async (event, settingsData) => {
-        try {
-            const db = getDb();
-            const stmt = db.prepare(`UPDATE settings SET tax = ?, discount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = "default"`);
-            const result = stmt.run(settingsData.tax || 0, settingsData.discount || 0);
-            return { success: result.changes > 0 };
-        } catch (error) {
-            return { success: false, error: error.message };
+   ipcMain.handle('db:updateSettings', async (event, settingsData) => {
+    try {
+        console.log('🔍 [UPDATE SETTINGS] Received data:', settingsData);
+        
+        const db = getDb();
+        
+        // First, check if settings record exists
+        const checkStmt = db.prepare(`SELECT * FROM settings WHERE id = 'default'`);
+        const existingSettings = checkStmt.get();
+        
+        console.log('🔍 [UPDATE SETTINGS] Existing settings:', existingSettings);
+        
+        if (!existingSettings) {
+            // Insert if not exists
+            console.log('🔍 [UPDATE SETTINGS] No settings found, inserting default...');
+            const insertStmt = db.prepare(`
+                INSERT INTO settings (id, tax, discount) 
+                VALUES ('default', ?, ?)
+            `);
+            insertStmt.run(settingsData.tax || 0, settingsData.discount || 0);
+            console.log('🔍 [UPDATE SETTINGS] Settings inserted successfully');
+            return { success: true };
         }
-    });
+        
+        // Update existing settings
+        const updateStmt = db.prepare(`
+            UPDATE settings 
+            SET tax = ?, discount = ?, updated_at = CURRENT_TIMESTAMP 
+            WHERE id = 'default'
+        `);
+        
+        const result = updateStmt.run(
+            settingsData.tax || 0, 
+            settingsData.discount || 0
+        );
+        
+        console.log('🔍 [UPDATE SETTINGS] Update result:', {
+            changes: result.changes,
+            tax: settingsData.tax,
+            discount: settingsData.discount
+        });
+        
+        // Verify the update
+        const verifyStmt = db.prepare(`SELECT * FROM settings WHERE id = 'default'`);
+        const updatedSettings = verifyStmt.get();
+        console.log('🔍 [UPDATE SETTINGS] Verified updated settings:', updatedSettings);
+        
+        return { success: result.changes > 0 };
+        
+    } catch (error) {
+        console.error('🔍 [UPDATE SETTINGS] Error:', error);
+        return { success: false, error: error.message };
+    }
+});
 
     ipcMain.handle('db:getTransactionLogs', async (event, filters = {}) => {
         try {
@@ -1469,6 +1833,11 @@ export function setupIpcHandlers() {
         } catch (error) {
             return { success: false, error: error.message };
         }
+    });
+
+    ipcMain.handle('app:restart', () => {
+        app.relaunch();
+        app.exit();
     });
 
     console.log('✅ All IPC handlers registered successfully');

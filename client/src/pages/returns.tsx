@@ -14,7 +14,7 @@ import { useLocation } from "wouter";
 import { getPaymentMethodColor } from "@/utils/GetPaymentMethodColor";
 import { api } from "../services/electron-api";
 import { useToast } from "@/hooks/use-toast";
-
+import { AlertTriangle } from "lucide-react";
 export default function Returns() {
     const [filters, setFilters] = useState({
         startDate: "",
@@ -32,7 +32,7 @@ export default function Returns() {
         queryFn: async () => {
             const result = await api.getReturns();
             let allReturns = [];
-            
+
             if (Array.isArray(result)) {
                 allReturns = result;
             } else if (result?.success && Array.isArray(result.data)) {
@@ -40,10 +40,10 @@ export default function Returns() {
             } else {
                 return [];
             }
-            
+
             // Apply filters locally
             let filtered = allReturns;
-            
+
             if (filters.search) {
                 const search = filters.search.toLowerCase();
                 filtered = filtered.filter(returnItem =>
@@ -52,32 +52,32 @@ export default function Returns() {
                     returnItem.customer_phone?.toLowerCase().includes(search)
                 );
             }
-            
+
             if (filters.startDate) {
                 filtered = filtered.filter(returnItem =>
                     new Date(returnItem.created_at) >= new Date(filters.startDate)
                 );
             }
-            
+
             if (filters.endDate) {
                 filtered = filtered.filter(returnItem =>
                     new Date(returnItem.created_at) <= new Date(filters.endDate)
                 );
             }
-            
+
             if (filters.paymentMethod && filters.paymentMethod !== 'all') {
                 filtered = filtered.filter(returnItem =>
                     returnItem.payment_method === filters.paymentMethod
                 );
             }
-            
+
             // Sort by created_at descending
             filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-            
+
             // Paginate
             const start = (page - 1) * pageSize;
             const paginated = filtered.slice(start, start + pageSize);
-            
+
             return paginated;
         },
         keepPreviousData: true,
@@ -87,16 +87,16 @@ export default function Returns() {
         try {
             const result = await api.getReturns();
             let allReturns = [];
-            
+
             if (Array.isArray(result)) {
                 allReturns = result;
             } else if (result?.success && Array.isArray(result.data)) {
                 allReturns = result.data;
             }
-            
+
             // Apply filters
             let filtered = allReturns;
-            
+
             if (filters.search) {
                 const search = filters.search.toLowerCase();
                 filtered = filtered.filter(returnItem =>
@@ -119,10 +119,10 @@ export default function Returns() {
                     returnItem.payment_method === filters.paymentMethod
                 );
             }
-            
+
             const headers = ['Receipt No', 'Date', 'Customer Name', 'Customer Phone', 'Subtotal', 'Tax', 'Total', 'Payment Method', 'Status'];
             const csvRows = [headers];
-            
+
             for (const returnItem of filtered) {
                 csvRows.push([
                     returnItem.receipt_number || '',
@@ -136,7 +136,7 @@ export default function Returns() {
                     returnItem.payment_status || ''
                 ]);
             }
-            
+
             const csvContent = csvRows.map(row => row.join(',')).join('\n');
             const blob = new Blob([csvContent], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
@@ -147,7 +147,7 @@ export default function Returns() {
             a.click();
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
-            
+
             toast({ title: "Export Successful", description: "Returns data has been exported to CSV" });
         } catch (error) {
             console.error('Export failed:', error);
@@ -178,7 +178,21 @@ export default function Returns() {
             key: 'receipt_number' as const,
             label: 'Receipt No.',
             render: (value: string) => (
-                <span className="font-medium text-primary font-mono">#{value}</span>
+                <span
+                    className="font-medium text-primary font-mono cursor-pointer hover:underline"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard.writeText(value);
+                        toast({
+                            title: "Copied!",
+                            description: `Receipt ${value} copied to clipboard`,
+                            duration: 1500
+                        });
+                    }}
+                    title="Click to copy receipt number"
+                >
+                    {value}
+                </span>
             ),
         },
         {
@@ -191,25 +205,58 @@ export default function Returns() {
                 </div>
             ),
         },
+        // {
+        //     key: 'customer_name' as const,
+        //     label: 'Customer',
+        //     render: (value: string, row: any) => (
+        //         <div>
+        //             <p className="text-sm">{value || 'Walk-in Customer'}</p>
+        //             {row.customer_phone && (
+        //                 <p className="text-xs text-muted-foreground">{row.customer_phone}</p>
+        //             )}
+        //         </div>
+        //     ),
+        // },
         {
-            key: 'customer_name' as const,
-            label: 'Customer',
+            key: 'subtotal' as const,
+            label: 'Subtotal',
+            render: (value: string) => (
+                <span className="font-semibold">{formatPKR(parseFloat(value) || 0)}</span>
+            ),
+        },
+        {
+            key: 'return_fee' as const,
+            label: 'Fine Amount',
             render: (value: string, row: any) => (
-                <div>
-                    <p className="text-sm">{value || 'Walk-in Customer'}</p>
-                    {row.customer_phone && (
-                        <p className="text-xs text-muted-foreground">{row.customer_phone}</p>
+                <div className="relative group">
+                    {parseFloat(value || '0') > 0 ? (
+                        <>
+                            <span className="font-semibold text-destructive">{formatPKR(parseFloat(value))}</span>
+                            {row.fine_reason && (
+                                <p className="text-xs text-muted-foreground">{row.fine_reason}</p>
+                            )}
+                            {/* Tooltip on hover for return_reason */}
+                            {row.return_reason && (
+                                <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-10">
+                                    <div className="bg-gray-900 text-white text-xs rounded py-1 px-2 whitespace-nowrap">
+                                        Return Reason: {row.return_reason}
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <span className="text-muted-foreground">-</span>
                     )}
                 </div>
             ),
         },
-        {
-            key: 'total' as const,
-            label: 'Amount',
-            render: (value: string) => (
-                <span className="font-semibold text-foreground data-table">{formatPKR(value)}</span>
-            ),
-        },
+        // {
+        //     key: 'total' as const,
+        //     label: 'Total',
+        //     render: (value: string) => (
+        //         <span className="font-semibold text-foreground data-table">{formatPKR(value)}</span>
+        //     ),
+        // },
         {
             key: 'payment_method' as const,
             label: 'Payment Method',
@@ -247,7 +294,9 @@ export default function Returns() {
     ];
 
     // Calculate summary stats
+    // Calculate summary stats
     const totalReturns = returns.reduce((sum: number, returnItem: any) => sum + parseFloat(returnItem.total || 0), 0);
+    const totalFines = returns.reduce((sum: number, returnItem: any) => sum + parseFloat(returnItem.return_fee || 0), 0);
     const completedReturns = returns.filter((returnItem: any) => returnItem.payment_status === 'completed');
     const pendingReturns = returns.filter((returnItem: any) => returnItem.payment_status === 'pending');
     const totalCount = returns.length;
@@ -255,7 +304,7 @@ export default function Returns() {
 
     const PaginationControls = () => (
         <div className="flex items-center justify-between space-x-2 py-4">
-            <div className="flex-1 text-sm text-muted-foreground">
+            {/* <div className="flex-1 text-sm text-muted-foreground">
                 Showing {((page - 1) * pageSize) + 1} to {Math.min(page * pageSize, totalCount)} of {totalCount} returns
             </div>
             <div className="flex items-center space-x-2">
@@ -302,7 +351,7 @@ export default function Returns() {
                     Next
                     <ChevronRight className="h-4 w-4" />
                 </Button>
-            </div>
+            </div> */}
         </div>
     );
 
@@ -317,7 +366,7 @@ export default function Returns() {
         <div className="flex-1 flex flex-col overflow-hidden">
             <main className="flex-1 overflow-auto p-6">
                 {/* Summary Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
                     <Card>
                         <CardContent className="p-6">
                             <div className="flex items-center justify-between">
@@ -336,11 +385,25 @@ export default function Returns() {
                         <CardContent className="p-6">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <p className="text-sm text-muted-foreground">Total Amount</p>
+                                    <p className="text-sm text-muted-foreground">Total Return Amount</p>
                                     <p className="text-2xl font-bold text-secondary">{formatPKR(totalReturns)}</p>
                                 </div>
                                 <div className="w-12 h-12 bg-secondary/10 rounded-lg flex items-center justify-center">
                                     <Download className="h-6 w-6 text-secondary" />
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <Card>
+                        <CardContent className="p-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-sm text-muted-foreground">Total Fines</p>
+                                    <p className="text-2xl font-bold text-destructive">{formatPKR(totalFines)}</p>
+                                </div>
+                                <div className="w-12 h-12 bg-destructive/10 rounded-lg flex items-center justify-center">
+                                    <AlertTriangle className="h-6 w-6 text-destructive" />
                                 </div>
                             </div>
                         </CardContent>
@@ -447,7 +510,6 @@ export default function Returns() {
                                 onExport={handleExport}
                             />
                         )}
-                        <PaginationControls />
                     </CardContent>
                 </Card>
             </main>

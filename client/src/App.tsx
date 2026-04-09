@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import Home from "@/pages/home";
 import POS from "@/pages/pos";
 import Products from "@/pages/products";
+import DamagedStock from "@/pages/damaged-stock";
 import Sales from "@/pages/sales";
 import Purchases from "@/pages/purchases";
 import Suppliers from "@/pages/suppliers";
@@ -46,7 +47,7 @@ function useLicense() {
         setIsLicensed(true);
       }
     } catch (error) {
-      console.error("License check failed:", error);
+      // console.error("License check failed:", error);
       setIsLicensed(false);
     }
   };
@@ -76,6 +77,7 @@ function Router() {
         <Switch>
           <Route path="/" component={Home} />
           <Route path="/pos" component={POS} />
+          <Route path="/damaged" component={DamagedStock} />
           <Route path="/products" component={Products} />
           <Route path="/sales" component={Sales} />
           <Route path="/returns" component={Returns} />

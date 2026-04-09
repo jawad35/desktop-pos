@@ -1,8 +1,10 @@
-import { ipcMain } from 'electron';
+import { ipcMain,app } from 'electron';
 import axios from 'axios';
 import { generateHardwareId } from './hardwareId.js';
 import licenseManager from './licenseManager.js';
-
+import path from 'path';
+import fs from 'fs';
+import { getDb } from './database.js';
 // Use your local server URL for development
 const API_URL = 'http://localhost:5002/api';  // Changed from 3000 to 5002
 
@@ -73,9 +75,9 @@ export function setupLicenseHandlers() {
     // Check license status
     // In licenseHandler.js, add debug to checkLicense handler
     ipcMain.handle('license:check', async () => {
-        console.log("🔍 [DEBUG] license:check called");
+        // console.log("🔍 [DEBUG] license:check called");
         const licenseData = licenseManager.loadLicense();
-        console.log("🔍 [DEBUG] Loaded license data:", licenseData);
+        // console.log("🔍 [DEBUG] Loaded license data:", licenseData);
 
         if (!licenseData) {
             console.log("🔍 [DEBUG] No license data found");
@@ -83,14 +85,14 @@ export function setupLicenseHandlers() {
         }
 
         const isValid = licenseManager.isLicenseValid(licenseData);
-        console.log("🔍 [DEBUG] License valid:", isValid);
+        // console.log("🔍 [DEBUG] License valid:", isValid);
 
         if (!isValid) {
-            console.log("🔍 [DEBUG] License invalid or expired");
+            // console.log("🔍 [DEBUG] License invalid or expired");
             return { success: false, message: 'License has expired or system clock tampered' };
         }
 
-        console.log("🔍 [DEBUG] License is valid, returning success");
+        // console.log("🔍 [DEBUG] License is valid, returning success");
         return {
             success: true,
             expiry_date: licenseData.expiry_date,
@@ -147,49 +149,76 @@ export function setupLicenseHandlers() {
     });
 
     ipcMain.handle('db:export', async () => {
-        try {
-            const db = getDb();
-            const sourcePath = db.name;
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const backupDir = path.join(app.getPath('documents'), 'POS Backups');
-
-            if (!fs.existsSync(backupDir)) {
-                fs.mkdirSync(backupDir, { recursive: true });
-            }
-
-            const destPath = path.join(backupDir, `pos_backup_${timestamp}.db`);
-            fs.copyFileSync(sourcePath, destPath);
-
-            // Update backup info
-            const backupInfoPath = path.join(path.dirname(sourcePath), 'backup_info.json');
-            fs.writeFileSync(backupInfoPath, JSON.stringify({ lastBackup: new Date().toISOString() }));
-
-            return { success: true, path: destPath };
-        } catch (error) {
-            return { success: false, error: error.message };
+    try {
+        const userDataPath = app.getPath('userData');
+        const sourcePath = path.join(userDataPath, 'pos.db');
+        
+        console.log("🔍 [IPC] Exporting database from:", sourcePath);
+        
+        if (!fs.existsSync(sourcePath)) {
+            return { success: false, error: 'Database file not found' };
         }
-    });
+        
+        const fileData = fs.readFileSync(sourcePath);
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const fileName = `pos_backup_${timestamp}.db`;
+        
+        console.log("🔍 [IPC] Export successful, size:", fileData.length);
+        
+        return { 
+            success: true, 
+            data: Array.from(fileData), // Convert to array for IPC transfer
+            fileName: fileName 
+        };
+    } catch (error) {
+        console.error("🔍 [IPC] Export error:", error);
+        return { success: false, error: error.message };
+    }
+});
 
-    ipcMain.handle('db:import', async (event, filePath) => {
-        try {
-            const db = getDb();
-            const targetPath = db.name;
-
-            // Validate file exists
-            if (!fs.existsSync(filePath)) {
-                return { success: false, error: 'File not found' };
-            }
-
-            // Create backup of current database before import
-            const backupPath = targetPath + '.backup';
+   ipcMain.handle('db:import', async (event, fileData) => {
+    console.log("🔍 [IPC] db:import called with data length:", fileData?.length);
+    
+    try {
+        const userDataPath = app.getPath('userData');
+        const targetPath = path.join(userDataPath, 'pos.db');
+        const backupPath = targetPath + '.backup';
+        
+        console.log("🔍 [IPC] Target path:", targetPath);
+        console.log("🔍 [IPC] Backup path:", backupPath);
+        
+        // Create backup of current database
+        if (fs.existsSync(targetPath)) {
+            console.log("🔍 [IPC] Creating backup...");
             fs.copyFileSync(targetPath, backupPath);
-
-            // Replace database
-            fs.copyFileSync(filePath, targetPath);
-
-            return { success: true };
-        } catch (error) {
-            return { success: false, error: error.message };
+            console.log("🔍 [IPC] Backup created");
         }
-    });
+        
+        // Close current database connection
+        try {
+            const db = getDb();
+            db.close();
+            console.log("🔍 [IPC] Database connection closed");
+        } catch (err) {
+            console.log("🔍 [IPC] No open database connection to close:", err.message);
+        }
+        
+        // Write the new database file
+        console.log("🔍 [IPC] Writing new database file...");
+        const buffer = Buffer.from(fileData);
+        fs.writeFileSync(targetPath, buffer);
+        console.log("🔍 [IPC] Database file written, size:", buffer.length);
+        
+        // Reinitialize database connection
+        console.log("🔍 [IPC] Reinitializing database...");
+        const { initDatabase } = await import('./database.js');
+        initDatabase(targetPath);
+        console.log("🔍 [IPC] Database reinitialized");
+        
+        return { success: true, message: 'Database imported successfully' };
+    } catch (error) {
+        console.error("🔍 [IPC] Import error:", error);
+        return { success: false, error: error.message };
+    }
+});
 }

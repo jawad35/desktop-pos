@@ -8,7 +8,8 @@ import { useToast } from "@/hooks/use-toast";
 import { api } from "../services/electron-api";
 import { Download, Upload, Database, AlertCircle, CheckCircle, Loader2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-
+import { queryClient } from "../lib/queryClient";
+import { useLocation } from "wouter";
 export default function SettingsPage() {
     const [tax, setTax] = useState("0");
     const [discount, setDiscount] = useState("0");
@@ -17,7 +18,7 @@ export default function SettingsPage() {
     const [exporting, setExporting] = useState(false);
     const [dbInfo, setDbInfo] = useState<{ size: string; path: string; lastBackup: string | null } | null>(null);
     const { toast } = useToast();
-
+    const [, setLocation] = useLocation();
     // Fetch current settings using Electron API
     useEffect(() => {
         fetchSettings();
@@ -27,10 +28,23 @@ export default function SettingsPage() {
     const fetchSettings = async () => {
         try {
             const result = await api.getSettings();
-            if (result) {
-                setTax(result.tax?.toString() || "0");
-                setDiscount(result.discount?.toString() || "0");
+            console.log('Settings API result:', result); // Debug log
+
+            // Handle different response formats
+            let settingsData = { tax: 0, discount: 0 };
+
+            if (result && result.success && result.data) {
+                settingsData = result.data;
+            } else if (result && result.data) {
+                settingsData = result.data;
+            } else if (result && result.tax !== undefined) {
+                settingsData = result;
             }
+
+            console.log('Parsed settings:', settingsData); // Debug log
+
+            setTax(settingsData.tax?.toString() || "0");
+            setDiscount(settingsData.discount?.toString() || "0");
         } catch (error) {
             console.error("Failed to fetch settings:", error);
             toast({ title: "Error", description: "Failed to load settings", variant: "destructive" });
@@ -61,7 +75,7 @@ export default function SettingsPage() {
                 tax: parseFloat(tax),
                 discount: parseFloat(discount)
             });
-            
+
             if (result.success) {
                 toast({ title: "Success", description: "Settings updated successfully!" });
             } else {
@@ -79,9 +93,9 @@ export default function SettingsPage() {
         try {
             const result = await window.electronAPI.exportDatabase();
             if (result.success) {
-                toast({ 
-                    title: "Export Successful", 
-                    description: `Database exported to: ${result.path}` 
+                toast({
+                    title: "Export Successful",
+                    description: `Database exported to: ${result.path}`
                 });
                 fetchDbInfo();
             } else {
@@ -96,33 +110,57 @@ export default function SettingsPage() {
 
     const handleImportDatabase = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
-        if (!file) return;
+        console.log("🔍 [IMPORT] File selected:", file);
+
+        if (!file) {
+            console.log("🔍 [IMPORT] No file selected");
+            return;
+        }
+
+        console.log("🔍 [IMPORT] File name:", file.name);
+        console.log("🔍 [IMPORT] File size:", file.size, "bytes");
 
         if (!confirm("WARNING: Importing a database will REPLACE all current data. This cannot be undone. Continue?")) {
+            console.log("🔍 [IMPORT] User cancelled import");
             event.target.value = "";
             return;
         }
 
+        console.log("🔍 [IMPORT] User confirmed, starting import...");
         setImporting(true);
+
         try {
-            const result = await window.electronAPI.importDatabase(file.path);
+            const arrayBuffer = await file.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+
+            console.log("🔍 [IMPORT] File read as ArrayBuffer, size:", uint8Array.length);
+            console.log("🔍 [IMPORT] Calling electronAPI.importDatabase with data");
+
+            const result = await window.electronAPI.importDatabase(uint8Array);
+            console.log("🔍 [IMPORT] Import result:", result);
+
             if (result.success) {
-                toast({ 
-                    title: "Import Successful", 
-                    description: "Database imported successfully. The app will now restart.",
-                    variant: "default"
-                });
-                setTimeout(() => {
-                    window.location.reload();
-                }, 2000);
+                toast({ title: "Import Successful", description: "App will restart..." });
+                setTimeout(async () => {
+                    await window.electronAPI.restartApp();
+                }, 1500);
             } else {
+                console.error("🔍 [IMPORT] Import failed:", result.error);
                 throw new Error(result.error);
             }
         } catch (error: any) {
-            toast({ title: "Import Failed", description: error.message, variant: "destructive" });
+            console.error("🔍 [IMPORT] Exception caught:", error);
+            console.error("🔍 [IMPORT] Error message:", error.message);
+            toast({
+                title: "Import Failed",
+                description: error.message,
+                variant: "destructive"
+            });
         } finally {
+            console.log("🔍 [IMPORT] Cleaning up...");
             setImporting(false);
             event.target.value = "";
+            console.log("🔍 [IMPORT] Import process complete");
         }
     };
 
@@ -153,7 +191,7 @@ export default function SettingsPage() {
     return (
         <div className="container mx-auto p-4 md:p-6 max-w-4xl">
             <h1 className="text-2xl md:text-3xl font-bold mb-6">Settings</h1>
-            
+
             <Tabs defaultValue="general" className="w-full">
                 <TabsList className="grid w-full grid-cols-3 mb-6">
                     <TabsTrigger value="general">General</TabsTrigger>
@@ -169,7 +207,7 @@ export default function SettingsPage() {
                         </CardHeader>
                         <CardContent className="space-y-4">
                             <div>
-                                <label className="block text-sm font-medium mb-2">Tax (%)</label>
+                                <label className="block text-sm font-medium mb-2">Tax</label>
                                 <Input
                                     type="number"
                                     step="0.01"
@@ -180,7 +218,7 @@ export default function SettingsPage() {
                                 <p className="text-xs text-muted-foreground mt-1">Default tax rate applied to all sales</p>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium mb-2">Discount (%)</label>
+                                <label className="block text-sm font-medium mb-2">Discount</label>
                                 <Input
                                     type="number"
                                     step="0.01"
@@ -213,7 +251,7 @@ export default function SettingsPage() {
                                 <code className="text-sm bg-background p-2 rounded block break-all">
                                     {dbInfo?.path || "Loading..."}
                                 </code>
-                                
+
                                 {dbInfo?.size && (
                                     <div className="flex items-center gap-2 mt-2">
                                         <span className="font-medium">Size:</span>
@@ -256,8 +294,8 @@ export default function SettingsPage() {
                                 <p className="text-sm text-muted-foreground">
                                     Export your entire database to a file. You can use this file to backup your data or transfer to another computer.
                                 </p>
-                                <Button 
-                                    onClick={handleExportDatabase} 
+                                <Button
+                                    onClick={handleExportDatabase}
                                     disabled={exporting}
                                     variant="secondary"
                                 >
@@ -297,7 +335,7 @@ export default function SettingsPage() {
                                         </div>
                                     </div>
                                 </div>
-                                
+
                                 <div>
                                     <Input
                                         type="file"
@@ -333,7 +371,7 @@ export default function SettingsPage() {
                                     <Database className="h-4 w-4 mr-2" />
                                     Backup Now
                                 </Button>
-                                
+
                                 {dbInfo?.lastBackup && (
                                     <p className="text-xs text-muted-foreground mt-2">
                                         Last backup: {new Date(dbInfo.lastBackup).toLocaleString()}

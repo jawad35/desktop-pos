@@ -12,6 +12,13 @@ type ElectronAPI = {
     createProduct: (data: any) => Promise<any>;
     updateProduct: (id: string, data: any) => Promise<any>;
     deleteProduct: (id: string) => Promise<any>;
+    restoreProduct: (id: string) => Promise<any>;
+
+    // Add to interface
+    createDamagedStock: (damageData: any) => Promise<any>;
+    getDamagedStock: (filters?: any) => Promise<any>;
+    updateDamagedStock: (id: string, updateData: any) => Promise<any>;
+    getDamageStats: () => Promise<any>;
 
     // Categories
     getCategories: () => Promise<any>;
@@ -36,6 +43,7 @@ type ElectronAPI = {
     getSale: (id: string) => Promise<any>;
     createSale: (data: any) => Promise<any>;
     updateSale: (id: string, data: any) => Promise<any>;  // Add this line
+    getSaleByReceiptNumber: (receiptNumber: string) => Promise<any>;
 
     // Purchases
     getPurchases: () => Promise<any>;
@@ -84,7 +92,7 @@ type ElectronAPI = {
     backupData: () => Promise<any>;
     openDataFolder: () => Promise<void>;
 
-   // License methods
+    // License methods
     activateLicense: (licenseKey: string) => Promise<any>;
     checkLicense: () => Promise<any>;
     verifyLicenseOnline: () => Promise<any>;
@@ -108,14 +116,19 @@ const electronAPI: ElectronAPI = {
 
 
     // Products
-    // Products
     getProducts: (filters) => window.electronAPI.getProducts(filters),
     getProduct: (id) => window.electronAPI.getProductById(id),
     createProduct: (data) => window.electronAPI.createProduct(data),
     updateProduct: (id, data) => window.electronAPI.updateProduct(id, data),
     deleteProduct: (id) => window.electronAPI.deleteProduct(id),
     restoreProduct: (id) => window.electronAPI.restoreProduct(id),
-
+    getSaleByReceiptNumber: (receiptNumber) => window.electronAPI.getSaleByReceiptNumber(receiptNumber),
+    // Add to electronAPI object
+    createDamagedStock: (damageData) => window.electronAPI.createDamagedStock(damageData),
+    getDamagedStock: (filters) => window.electronAPI.getDamagedStock(filters),
+    updateDamagedStock: (id, updateData) => window.electronAPI.updateDamagedStock(id, updateData),
+    getDamageStats: () => window.electronAPI.getDamageStats(),
+    // In the electronAPI object, add:
     // Categories
     getCategories: () => window.electronAPI.getCategories(),
     createCategory: (data) => window.electronAPI.createCategory(data),
@@ -198,6 +211,7 @@ const webAPI: ElectronAPI = {
     createProduct: (data) => fetch('/api/products', { method: 'POST', body: JSON.stringify(data) }).then(r => r.json()),
     updateProduct: (id, data) => fetch(`/api/products/${id}`, { method: 'PUT', body: JSON.stringify(data) }).then(r => r.json()),
     deleteProduct: (id) => fetch(`/api/products/${id}`, { method: 'DELETE' }).then(r => r.json()),
+    restoreProduct: (id) => fetch(`/api/products/${id}/restore`, { method: 'PUT' }).then(r => r.json()),
     getCategories: () => fetch('/api/categories').then(r => r.json()),
     createCategory: (data) => fetch('/api/categories', { method: 'POST', body: JSON.stringify(data) }).then(r => r.json()),
     updateCategory: (id, data) => fetch(`/api/categories/${id}`, { method: 'PUT', body: JSON.stringify(data) }).then(r => r.json()),
@@ -213,6 +227,7 @@ const webAPI: ElectronAPI = {
     getSales: () => fetch('/api/sales').then(r => r.json()),
     getSale: (id) => fetch(`/api/sales/${id}`).then(r => r.json()),
     createSale: (data) => fetch('/api/sales', { method: 'POST', body: JSON.stringify(data) }).then(r => r.json()),
+    updateSale: (id, data) => fetch(`/api/sales/${id}`, { method: 'PUT', body: JSON.stringify(data) }).then(r => r.json()),
     getPurchases: () => fetch('/api/purchases').then(r => r.json()),
     createPurchase: (data) => fetch('/api/purchases', { method: 'POST', body: JSON.stringify(data) }).then(r => r.json()),
     updatePurchase: (id, data) => fetch(`/api/purchases/${id}`, { method: 'PUT', body: JSON.stringify(data) }).then(r => r.json()),

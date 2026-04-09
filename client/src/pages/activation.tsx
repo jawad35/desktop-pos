@@ -16,8 +16,8 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
     const { toast } = useToast();
 
   const handleActivate = async () => {
-    console.log("🔍 [DEBUG] Activate button clicked");
-    console.log("🔍 [DEBUG] License key entered:", licenseKey);
+    // console.log("🔍 [DEBUG] Activate button clicked");
+    // console.log("🔍 [DEBUG] License key entered:", licenseKey);
     
     if (!licenseKey.trim()) {
         setError('Please enter your license key');

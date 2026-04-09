@@ -10,17 +10,17 @@ export function initDatabase(dbPath) {
     if (!fs.existsSync(dbDir)) {
         fs.mkdirSync(dbDir, { recursive: true });
     }
-    
+
     const db = new Database(dbPath);
-    
+
     // Enable foreign keys
     db.pragma('foreign_keys = ON');
-    
+
     // Create all tables
     createAllTables(db);
-    
+
     console.log('✅ All database tables created successfully');
-    
+
     dbInstance = db;
     return db;
 }
@@ -41,7 +41,7 @@ function createAllTables(db) {
             expire INTEGER NOT NULL
         )
     `);
-    
+
     db.exec(`CREATE INDEX IF NOT EXISTS IDX_session_expire ON sessions(expire)`);
 
     // 2. Categories table
@@ -168,26 +168,31 @@ function createAllTables(db) {
     `);
 
     // 8. Sales table
+    // 8. Sales table - add returned_items column
     db.exec(`
-        CREATE TABLE IF NOT EXISTS sales (
-            id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-            receipt_number TEXT UNIQUE NOT NULL,
-            customer_name TEXT,
-            customer_phone TEXT,
-            subtotal DECIMAL(10,2) NOT NULL,
-            tax DECIMAL(10,2) DEFAULT 0,
-            discount DECIMAL(10,2) DEFAULT 0,
-            total DECIMAL(10,2) NOT NULL,
-            payment_method TEXT DEFAULT 'cash',
-            account_number TEXT,
-            payment_status TEXT DEFAULT 'completed',
-            employee_id TEXT,
-            user_id TEXT NOT NULL,
-            shop_id TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (employee_id) REFERENCES employees(id)
-        )
-    `);
+    CREATE TABLE IF NOT EXISTS sales (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        receipt_number TEXT UNIQUE NOT NULL,
+        customer_name TEXT,
+        customer_phone TEXT,
+        subtotal DECIMAL(10,2) NOT NULL,
+        tax DECIMAL(10,2) DEFAULT 0,
+        discount DECIMAL(10,2) DEFAULT 0,
+        total DECIMAL(10,2) NOT NULL,
+        payment_method TEXT DEFAULT 'cash',
+        account_number TEXT,
+        payment_status TEXT DEFAULT 'completed',
+        employee_id TEXT,
+        user_id TEXT NOT NULL,
+        shop_id TEXT NOT NULL,
+        return_status TEXT DEFAULT 'none',
+        total_returned_amount DECIMAL(10,2) DEFAULT 0,
+        returned_items TEXT DEFAULT '[]',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (employee_id) REFERENCES employees(id)
+    )
+`);
 
     db.exec(`CREATE INDEX IF NOT EXISTS idx_sales_receipt ON sales(receipt_number)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at)`);
@@ -402,6 +407,36 @@ function createAllTables(db) {
 
     db.exec(`CREATE INDEX IF NOT EXISTS idx_salary_employee_month ON salaries(employee_id, month)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_salary_status ON salaries(status)`);
+    // Add this to your createAllTables function in database.js
 
-    console.log('✅ All 19 tables created successfully');
+    // 20. Damaged Stock table
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS damaged_stock (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        product_id TEXT NOT NULL,
+        product_name TEXT NOT NULL,
+        sku TEXT NOT NULL,
+        original_sale_id TEXT,
+        return_id TEXT,
+        quantity INTEGER NOT NULL,
+        original_cost_price DECIMAL(10,2) NOT NULL,
+        selling_price DECIMAL(10,2) NOT NULL,
+        total_loss DECIMAL(10,2) NOT NULL,
+        status TEXT DEFAULT 'pending',
+        damage_reason TEXT,
+        notes TEXT,
+        recovery_date DATETIME,
+        recovery_notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id),
+        FOREIGN KEY (original_sale_id) REFERENCES sales(id),
+        FOREIGN KEY (return_id) REFERENCES returns(id)
+    )
+`);
+
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_damaged_status ON damaged_stock(status)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_damaged_product ON damaged_stock(product_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_damaged_created ON damaged_stock(created_at)`);
+    console.log('✅ All 20 tables created successfully');
 }

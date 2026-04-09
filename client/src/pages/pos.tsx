@@ -4,6 +4,7 @@ import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -13,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Product, Category, Brand, Supplier } from "@/types/api";
 import BarcodeScanner from "react-qr-barcode-scanner"
 import { api } from "../services/electron-api";
+import { useSettings } from "@/hooks/useSettings";
 import {
     Search,
     Mic,
@@ -56,19 +58,42 @@ export default function Orders() {
     const [scannedCode, setScannedCode] = useState<string | null>(null);
     const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
     const [amountPaid, setAmountPaid] = useState(0);
-    const [isManualReturn, setIsManualReturn] = useState(true)
+    const [isManualReturn, setIsManualReturn] = useState(false)
     const [discount, setDiscount] = useState(0);
-    const [tax, setTax] = useState(1);
+    const [tax, setTax] = useState(0);
     const [paymentStatus, setPaymentStatus] = useState<string>("completed");
     // Add these to your existing state variables
     const [isReturnMode, setIsReturnMode] = useState(false);
     const [isOrderMode, setIsOrderMode] = useState(false);
     const [employeeId, setEmployeeId] = useState("");
-    const [returnReceiptNumber, setReturnReceiptNumber] = useState("");
+    const [returnReceiptNumber, setReturnReceiptNumber] = useState("RCP-1775566266505");
     const [returnReason, setReturnReason] = useState("");
     const [returnFeeType, setReturnFeeType] = useState<"percentage" | "fixed">("percentage");
     const [returnFeeValue, setReturnFeeValue] = useState(0);
     const [searchedSale, setSearchedSale] = useState<any>(null);
+
+    // Add this with your other state variables
+    const [returnedItemsList, setReturnedItemsList] = useState<any[]>([]);
+    // Add this state with your other useState declarations
+    const [isBarcodeModalOpen, setIsBarcodeModalOpen] = useState(false);
+    const [manualBarcode, setManualBarcode] = useState('');
+
+    // Add these with your other state variables
+    const [taxEnabled, setTaxEnabled] = useState(true);
+    const [discountEnabled, setDiscountEnabled] = useState(true);
+    const [customTax, setCustomTax] = useState(0);
+    const [customDiscount, setCustomDiscount] = useState(0);
+    const [useCustomTax, setUseCustomTax] = useState(false);
+    const [useCustomDiscount, setUseCustomDiscount] = useState(false);
+    // Add this with your other state variables
+    const [hasModifiedQuantities, setHasModifiedQuantities] = useState(false);
+    // Add this with your other state variables
+    const [reducedItemsMap, setReducedItemsMap] = useState<Map<string, { originalQuantity: number; returnQuantity: number }>>(new Map());
+    // Add these with your other state variables
+    const [fineEnabled, setFineEnabled] = useState(false);
+    const [fineType, setFineType] = useState<"percentage" | "fixed">("percentage");
+    const [fineValue, setFineValue] = useState(0);
+    const [fineReason, setFineReason] = useState("");
 
     // Enhanced filters and pagination
     const [filters, setFilters] = useState({
@@ -95,6 +120,94 @@ export default function Orders() {
     const { shop } = useAuth();
 
     const { toast } = useToast();
+
+    // Add this state for damage tracking
+    const [damagedItems, setDamagedItems] = useState<{ [key: string]: { isDamaged: boolean; quantity: number; reason: string } }>({});
+
+    // Add this to your cart items to show damage checkbox
+    const [showDamageDialog, setShowDamageDialog] = useState(false);
+    const [currentItemForDamage, setCurrentItemForDamage] = useState<any>(null);
+    const [damageQuantity, setDamageQuantity] = useState(1);
+    const [damageReason, setDamageReason] = useState("");
+    const [damageNotes, setDamageNotes] = useState("");
+
+    // Add damage reason options
+    const damageReasons = [
+        "Customer damaged",
+        "Shipping damaged",
+        "Manufacturing defect",
+        "Expired product",
+        "Wrong item received",
+        "Other"
+    ];
+
+    const { settings, isLoading: settingsLoading } = useSettings();
+
+    // Add this useEffect to load settings when available
+    useEffect(() => {
+        if (settings) {
+            setTax(settings.tax || 0);
+            setDiscount(settings.discount || 0);
+            setCustomTax(settings.tax || 0);
+            setCustomDiscount(settings.discount || 0);
+            console.log('Settings loaded:', settings);
+        }
+    }, [settings]);
+
+    // Function to handle marking item as damaged
+    const handleMarkDamaged = (item: any) => {
+        setCurrentItemForDamage(item);
+        setDamageQuantity(1);
+        setDamageReason("");
+        setDamageNotes("");
+        setShowDamageDialog(true);
+    };
+
+    const handleReturnItem = (item: CartItem) => {
+        console.log("🔍 [RETURN] Moving item to return list:", {
+            id: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            total: item.total
+        });
+
+        // Add to returned items list with image
+        setReturnedItemsList(prev => [...prev, {
+            ...item,
+            returnReason: returnReason || "Product return",
+            returnDate: new Date().toISOString()
+        }]);
+
+        // Remove from cart
+        setCart(cart.filter(cartItem => cartItem.id !== item.id));
+
+        // Clear modified flag since we're moving to return list
+        setHasModifiedQuantities(false);
+
+        toast({
+            title: "Item Marked for Return",
+            description: `${item.quantity} x ${item.name} will be returned when you process.`,
+        });
+    };
+
+    // Function to update cart item quantity
+    const updateCartItemQuantity = (itemId: string, newQuantity: number) => {
+        if (newQuantity <= 0) {
+            // Remove item if quantity becomes 0
+            setCart(cart.filter(item => item.id !== itemId));
+        } else {
+            setCart(cart.map(item =>
+                item.id === itemId
+                    ? {
+                        ...item,
+                        quantity: newQuantity,
+                        total: newQuantity * parseFloat(item.price),
+                        availableStock: item.availableStock
+                    }
+                    : item
+            ));
+        }
+    };
 
     // Fetch current settings
 
@@ -179,10 +292,14 @@ export default function Orders() {
     const totalCount = productsData?.total || 0;
     const totalPages = Math.ceil(totalCount / pageSize);
 
+    // Update the salesman query
     const { data: salesman = [] } = useQuery<any[]>({
         queryKey: ["employees", "salesman"],
         queryFn: async () => {
+            console.log("🔍 [SALESMAN] Fetching salesman...");
             const result = await api.getEmployees({ employeeType: "salesman" });
+            console.log("🔍 [SALESMAN] Result:", result);
+
             if (Array.isArray(result)) return result;
             if (result?.success && Array.isArray(result.data)) return result.data;
             return [];
@@ -219,6 +336,41 @@ export default function Orders() {
         },
     });
 
+
+    const handleManualBarcodeAdd = async () => {
+        if (!manualBarcode.trim()) {
+            toast({ title: "Error", description: "Please enter a barcode", variant: "destructive" });
+            return;
+        }
+
+        try {
+            const result = await api.getProducts();
+            let products = [];
+            if (Array.isArray(result)) products = result;
+            else if (result?.success && Array.isArray(result.data)) products = result.data;
+
+            const product = products.find(p => p.barcode === manualBarcode);
+
+            if (product) {
+                addToCart(product);
+                toast({ title: "Product Added", description: product.name });
+                setManualBarcode('');
+                setIsBarcodeModalOpen(false);
+            } else {
+                toast({
+                    title: "Not Found",
+                    description: `No product found with barcode ${manualBarcode}`,
+                    variant: "destructive",
+                });
+            }
+        } catch (err: any) {
+            toast({
+                title: "Error",
+                description: err.message,
+                variant: "destructive",
+            });
+        }
+    };
 
     // Pagination Controls Component
     const PaginationControls = () => (
@@ -276,27 +428,79 @@ export default function Orders() {
     );
 
     // Add these mutations after your processSaleMutation
+    // Update the searchSaleMutation
     const searchSaleMutation = useMutation({
         mutationFn: async (receiptNumber: string) => {
+            console.log("🔍 [SEARCH] Looking for receipt:", receiptNumber);
             const result = await api.getSaleByReceiptNumber(receiptNumber);
-            if (!result) throw new Error("Sale not found");
+            console.log("🔍 [SEARCH] API result:", result);
+            if (!result) {
+                throw new Error("Sale not found");
+            }
             return result;
         },
         onSuccess: (data) => {
+            console.log("🔍 [SEARCH] Sale found:", data);
+            setHasModifiedQuantities(false);
+            setReducedItemsMap(new Map());
+
+            if (data.return_status === 'full') {
+                toast({
+                    title: "Sale Fully Returned",
+                    description: "This sale has already been fully returned. No more returns possible.",
+                    variant: "destructive",
+                });
+                setIsReturnMode(false);
+                return;
+            }
+
             setSearchedSale(data);
-            const returnItems = data.items?.map((item: any) => ({
+
+
+            // Load original sale's tax and discount
+            const originalTax = parseFloat(data.tax) || 0;
+            const originalDiscount = parseFloat(data.discount) || 0;
+            setTax(originalTax);
+            setDiscount(originalDiscount);
+            setCustomTax(originalTax);
+            setCustomDiscount(originalDiscount);
+            setUseCustomTax(false);
+            setUseCustomDiscount(false);
+            setTaxEnabled(true);
+            setDiscountEnabled(true);
+            // Enable/disable based on whether values are 0
+            setTaxEnabled(originalTax !== 0);
+            setDiscountEnabled(originalDiscount !== 0);
+
+            // Reset custom flags
+            setUseCustomTax(false);
+            setUseCustomDiscount(false);
+            console.log('Original receipt tax:', originalTax, 'discount:', originalDiscount);
+
+            // IMPORTANT: Map the items correctly - image_url is directly on the item
+            const cartItems = data.items?.map((item: any) => ({
                 id: item.product_id,
-                name: item.product?.name || "Product",
+                name: item.product_name || "Product",  // Use product_name from the query
                 price: item.unit_price,
                 quantity: item.quantity,
                 total: parseFloat(item.total),
-                imageUrl: item.product?.image_url,
-                availableStock: item.product?.stock || 0,
+                imageUrl: item.image_url,  // Directly from the item, not item.product
+                availableStock: item.stock || 0,  // Use stock from the query
                 originalQuantity: item.quantity,
             })) || [];
-            setCart(returnItems);
+
+            console.log('Mapped cart items with images:', cartItems.map(i => ({ name: i.name, hasImage: !!i.imageUrl })));
+
+            setCart(cartItems);
+            setReturnedItemsList([]);
+
+            toast({
+                title: "Sale Found",
+                description: `Receipt: ${data.receipt_number} | Tax: ${originalTax}% | Discount: ${originalDiscount}%`
+            });
         },
         onError: (error: Error) => {
+            console.error("🔍 [SEARCH] Error:", error);
             toast({
                 title: "Sale Not Found",
                 description: error.message,
@@ -326,7 +530,12 @@ export default function Orders() {
             setReturnReason("");
             setSearchedSale(null);
             setIsReturnMode(false);
+
+            // Only refresh queries - let the main process handle stock update
             queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+            queryClient.invalidateQueries({ queryKey: ["paginate-products"] });
+            queryClient.invalidateQueries({ queryKey: ["sales"] });
+            queryClient.invalidateQueries({ queryKey: ["returns"] });
         },
         onError: (error: Error) => {
             console.error('Return mutation error:', error);
@@ -338,9 +547,9 @@ export default function Orders() {
         },
     });
 
-    // Rest of your existing functions remain the same...
     const processSaleMutation = useMutation({
         mutationFn: async ({ saleData, items }: { saleData: any; items: any[] }) => {
+            // Don't update stock here - let the main process handle it
             const result = await api.createSale(saleData, items);
             if (!result?.success && !result?.id) {
                 throw new Error(result?.error || "Failed to process sale");
@@ -356,6 +565,7 @@ export default function Orders() {
             setCustomerName("");
             setCustomerPhone("");
             queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+            queryClient.invalidateQueries({ queryKey: ["paginate-products"] });
         },
         onError: (error: Error) => {
             toast({
@@ -368,6 +578,7 @@ export default function Orders() {
 
     const addToCart = (product: any) => {
         const existingItem = cart.find(item => item.id === product.id);
+        const productPrice = parseFloat(product.selling_price);
 
         if (existingItem) {
             if (existingItem.quantity >= product.stock) {
@@ -383,7 +594,7 @@ export default function Orders() {
                     ? {
                         ...item,
                         quantity: item.quantity + 1,
-                        total: (item.quantity + 1) * parseFloat(item.selling_price),
+                        total: (item.quantity + 1) * productPrice,
                         availableStock: product.stock
                     }
                     : item
@@ -395,40 +606,72 @@ export default function Orders() {
                 price: product.selling_price,
                 imageUrl: product.image_url,
                 quantity: 1,
-                total: parseFloat(product.selling_price),
+                total: productPrice,
                 availableStock: product.stock
             }]);
         }
     };
 
     const updateQuantity = (id: string, change: number) => {
-        setCart(cart.map(item => {
-            if (item.id === id) {
-                const newQuantity = item.quantity + change;
+        setCart(prevCart => {
+            const updatedCart = prevCart.map(item => {
+                if (item.id === id) {
+                    const newQuantity = item.quantity + change;
 
-                // Prevent going below 1
-                if (newQuantity < 1) {
-                    return item;
+                    // Prevent going below 1
+                    if (newQuantity < 1) {
+                        return item;
+                    }
+
+                    // For return mode, don't check available stock
+                    if (!isReturnMode) {
+                        // Prevent exceeding available stock only in sale mode
+                        if (newQuantity > item.availableStock) {
+                            toast({
+                                title: "Insufficient Stock",
+                                description: `Only ${item.availableStock} items available`,
+                                variant: "destructive"
+                            });
+                            return item;
+                        }
+                    } else {
+                        // In return mode, track reduced quantities
+                        const originalItem = searchedSale?.items?.find((saleItem: any) => saleItem.product_id === id);
+                        if (originalItem && newQuantity < originalItem.quantity) {
+                            const returnQuantity = originalItem.quantity - newQuantity;
+                            setReducedItemsMap(prev => {
+                                const newMap = new Map(prev);
+                                newMap.set(id, {
+                                    originalQuantity: originalItem.quantity,
+                                    returnQuantity: returnQuantity
+                                });
+                                return newMap;
+                            });
+                            setHasModifiedQuantities(true);
+                        } else if (originalItem && newQuantity >= originalItem.quantity) {
+                            // If quantity increased back to original, remove from reduced items
+                            setReducedItemsMap(prev => {
+                                const newMap = new Map(prev);
+                                newMap.delete(id);
+                                return newMap;
+                            });
+                            if (reducedItemsMap.size === 1 && newMap.size === 0) {
+                                setHasModifiedQuantities(false);
+                            }
+                        }
+                    }
+
+                    return {
+                        ...item,
+                        quantity: newQuantity,
+                        total: newQuantity * parseFloat(item.price)
+                    };
                 }
+                return item;
+            });
 
-                // Prevent exceeding available stock
-                if (newQuantity > item.availableStock) {
-                    toast({
-                        title: "Insufficient Stock",
-                        description: `Only ${item.availableStock} items available`,
-                        variant: "destructive"
-                    });
-                    return item;
-                }
-
-                return {
-                    ...item,
-                    quantity: newQuantity,
-                    total: newQuantity * parseFloat(item.price)
-                };
-            }
-            return item;
-        }));
+            return updatedCart;
+        });
     };
 
     const removeFromCart = (id: string) => {
@@ -436,7 +679,13 @@ export default function Orders() {
     };
 
     const subtotal = cart.reduce((sum, item) => sum + item.total, 0);
-    const total = subtotal + tax;
+
+    const currentTax = taxEnabled ? (useCustomTax ? customTax : tax) : 0;
+    const currentDiscount = discountEnabled ? (useCustomDiscount ? customDiscount : discount) : 0;
+
+    const taxAmount = (subtotal * currentTax) / 100;
+    const discountAmount = (subtotal * currentDiscount) / 100;
+    const total = subtotal + taxAmount - discountAmount;
 
     const handleProcessPayment = () => {
         if (cart.length === 0) {
@@ -456,13 +705,22 @@ export default function Orders() {
             total: item.total.toString(),
         }));
 
+        // Use 0 if tax is disabled, otherwise use the current tax value
+        const currentTaxValue = taxEnabled ? (useCustomTax ? customTax : tax) : 0;
+        const currentDiscountValue = discountEnabled ? (useCustomDiscount ? customDiscount : discount) : 0;
+
+        const taxAmountValue = (subtotal * currentTaxValue) / 100;
+        const discountAmountValue = (subtotal * currentDiscountValue) / 100;
+        const totalValue = subtotal + taxAmountValue - discountAmountValue;
+
         const saleData = {
             receiptNumber,
             customerName: customerName || null,
             customerPhone: customerPhone || null,
             subtotal: subtotal.toString(),
-            tax: tax.toString(),
-            total: total.toString(),
+            tax: currentTaxValue.toString(),  // Will be 0 if disabled
+            discount: currentDiscountValue.toString(),  // Will be 0 if disabled
+            total: totalValue.toString(),
             paymentMethod,
             paymentStatus,
             employeeId: employeeId || null,
@@ -597,6 +855,12 @@ export default function Orders() {
 
     const generateReceiptData = (): ReceiptData => {
         const now = new Date();
+        const currentTaxValue = taxEnabled ? (useCustomTax ? customTax : tax) : 0;
+        const currentDiscountValue = discountEnabled ? (useCustomDiscount ? customDiscount : discount) : 0;
+        const taxAmountValue = (subtotal * currentTaxValue) / 100;
+        const discountAmountValue = (subtotal * currentDiscountValue) / 100;
+        const totalValue = subtotal + taxAmountValue - discountAmountValue;
+
         return {
             shopName: shop.name || '',
             shopAddress: shop.location || '',
@@ -607,12 +871,12 @@ export default function Orders() {
             customerPhone: customerPhone || "N/A",
             items: cart,
             subtotal: subtotal,
-            tax: tax,
-            discount: discount,
-            total: total - discount,
+            tax: taxAmountValue,
+            discount: discountAmountValue,
+            total: totalValue,
             paymentMethod: paymentMethod,
             amountPaid: amountPaid,
-            change: Math.max(0, amountPaid - (total - discount)),
+            change: Math.max(0, amountPaid - totalValue),
         };
     };
 
@@ -657,31 +921,50 @@ export default function Orders() {
     }, []);
 
     // Update your handleProcessReturn function with better calculations
-    const handleProcessReturn = () => {
-        if (cart.length === 0) {
+    const handleProcessReturn = async () => {
+        // Build the return items list from both sources
+        let allReturnItems = [...returnedItemsList];
+
+        // Add reduced quantity items to return list
+        // Add reduced quantity items to return list
+        for (const [productId, reducedInfo] of reducedItemsMap.entries()) {
+            const cartItem = cart.find(item => item.id === productId);
+            if (cartItem && reducedInfo.returnQuantity > 0) {
+                allReturnItems.push({
+                    ...cartItem,
+                    quantity: reducedInfo.returnQuantity,
+                    total: reducedInfo.returnQuantity * parseFloat(cartItem.price),
+                    returnReason: returnReason || "Product return",
+                    returnDate: new Date().toISOString(),
+                    imageUrl: cartItem.imageUrl // Preserve image
+                });
+            }
+        }
+
+        if (allReturnItems.length === 0) {
             toast({
-                title: "Cart Empty",
-                description: "Please add items to return",
+                title: "No Items to Return",
+                description: "Please select items to return or reduce quantity first",
                 variant: "destructive",
             });
             return;
         }
 
-        // Calculate return fee
+        // Calculate return fee using allReturnItems
         let returnFee = 0;
         if (returnFeeType === "percentage") {
-            returnFee = (subtotal * returnFeeValue) / 100;
+            const returnSubtotal = allReturnItems.reduce((sum, item) => sum + item.total, 0);
+            returnFee = (returnSubtotal * returnFeeValue) / 100;
         } else {
             returnFee = returnFeeValue;
         }
 
-        const returnTotal = Math.max(0, subtotal - returnFee);
+        const returnTotal = allReturnItems.reduce((sum, item) => sum + item.total, 0) - returnFee;
         const returnReceiptNumber = `RET-${Date.now()}`;
-        const originalSaleId = isManualReturn
-            ? `manual-${Date.now()}`
-            : searchedSale?.id;
+        const originalSaleId = isManualReturn ? `manual-${Date.now()}` : searchedSale?.id;
 
-        const items = cart.map(item => ({
+        // Prepare return items for database
+        const returnItems = allReturnItems.map(item => ({
             productId: item.id,
             quantity: item.quantity,
             unitPrice: parseFloat(item.price),
@@ -693,7 +976,7 @@ export default function Orders() {
             originalSaleId: originalSaleId,
             customerName: customerName || searchedSale?.customerName || "Walk-in Customer",
             customerPhone: customerPhone || searchedSale?.customerPhone || "N/A",
-            subtotal: subtotal.toString(),
+            subtotal: allReturnItems.reduce((sum, item) => sum + item.total, 0).toString(),
             tax: tax.toString(),
             discount: discount.toString(),
             returnFee: returnFee.toString(),
@@ -705,11 +988,132 @@ export default function Orders() {
             shopId: "default",
         };
 
-        console.log('Return Data:', returnData);
-        console.log('Return Items:', items);
+        try {
+            const result = await processReturnMutation.mutateAsync({ returnData, items: returnItems });
 
-        processReturnMutation.mutate({ returnData, items });
+            if (result && searchedSale && !isManualReturn) {
+                // Get current items from the sale
+                let currentSaleItems = searchedSale.items || [];
+
+                // Create a map of items being returned from both sources
+                const returningItemsMap = new Map();
+                allReturnItems.forEach(item => {
+                    returningItemsMap.set(item.id, item.quantity);
+                });
+
+                // Update the sale items - remove returned quantities
+                const updatedSaleItems = [];
+                let totalReturnedAmountThisTransaction = 0;
+
+                for (const saleItem of currentSaleItems) {
+                    const returningQty = returningItemsMap.get(saleItem.product_id);
+
+                    if (returningQty) {
+                        if (returningQty >= saleItem.quantity) {
+                            totalReturnedAmountThisTransaction += parseFloat(saleItem.total);
+                        } else {
+                            const newQuantity = saleItem.quantity - returningQty;
+                            const newTotal = newQuantity * parseFloat(saleItem.unit_price);
+                            totalReturnedAmountThisTransaction += returningQty * parseFloat(saleItem.unit_price);
+
+                            updatedSaleItems.push({
+                                product_id: saleItem.product_id,
+                                quantity: newQuantity,
+                                unit_price: saleItem.unit_price,
+                                total: newTotal.toString()
+                            });
+                        }
+                    } else {
+                        updatedSaleItems.push({
+                            product_id: saleItem.product_id,
+                            quantity: saleItem.quantity,
+                            unit_price: saleItem.unit_price,
+                            total: saleItem.total
+                        });
+                    }
+                }
+
+                // Get existing returned items from the sale (preserve history)
+                let existingReturnedItems = [];
+                try {
+                    if (searchedSale.returned_items) {
+                        if (typeof searchedSale.returned_items === 'string') {
+                            existingReturnedItems = JSON.parse(searchedSale.returned_items);
+                        } else if (Array.isArray(searchedSale.returned_items)) {
+                            existingReturnedItems = searchedSale.returned_items;
+                        }
+                    }
+                } catch (e) {
+                    console.error('Failed to parse existing returned_items:', e);
+                    existingReturnedItems = [];
+                }
+
+                // APPEND current return to existing history
+                const newReturnedItems = [
+                    ...existingReturnedItems,
+                    {
+                        returnReceiptNumber: returnReceiptNumber,
+                        returnDate: new Date().toISOString(),
+                        returnReason: returnReason || "Product return",
+                        returnFee: returnFee,
+                        items: allReturnItems.map(item => ({
+                            productId: item.id,
+                            productName: item.name,
+                            quantity: item.quantity,
+                            unitPrice: parseFloat(item.price),
+                            total: item.total
+                        }))
+                    }
+                ];
+
+                // Calculate new totals
+                const newSubtotal = updatedSaleItems.reduce((sum, item) => sum + parseFloat(item.total), 0);
+                const newTaxAmount = (newSubtotal * parseFloat(searchedSale.tax)) / 100;
+                const newDiscountAmount = (newSubtotal * parseFloat(searchedSale.discount)) / 100;
+                const newTotal = newSubtotal + newTaxAmount - newDiscountAmount;
+                const previouslyReturned = parseFloat(searchedSale.total_returned_amount || 0);
+                const returnStatus = updatedSaleItems.length === 0 ? 'full' : 'partial';
+
+                // Update the sale with both metadata AND items
+                await api.updateSale(originalSaleId, {
+                    items: updatedSaleItems,
+                    subtotal: newSubtotal,
+                    total: newTotal,
+                    return_status: returnStatus,
+                    total_returned_amount: previouslyReturned + totalReturnedAmountThisTransaction,
+                    returned_items: JSON.stringify(newReturnedItems)
+                });
+            }
+
+            toast({
+                title: "Return Processed",
+                description: `${allReturnItems.length} item(s) returned successfully`,
+            });
+
+            // Reset state
+            setCart([]);
+            setReturnedItemsList([]);
+            setReducedItemsMap(new Map());
+            setHasModifiedQuantities(false);
+            setCustomerName("");
+            setCustomerPhone("");
+            setReturnReceiptNumber("");
+            setReturnReason("");
+            setSearchedSale(null);
+            setIsReturnMode(false);
+            queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+            queryClient.invalidateQueries({ queryKey: ["sales"] });
+
+        } catch (error) {
+            console.error("Return processing error:", error);
+            toast({
+                title: "Return Failed",
+                description: error.message,
+                variant: "destructive",
+            });
+        }
     };
+
     return (
         <div className="flex-1 flex flex-col overflow-hidden">
             <main className="flex-1 overflow-auto p-6">
@@ -728,6 +1132,15 @@ export default function Orders() {
                                     data-testid="input-product-search"
                                 />
                             </div>
+
+                            <Button
+                                variant="outline"
+                                size="icon"
+                                data-testid="button-barcode-scan"
+                                onClick={() => setIsBarcodeModalOpen(true)}
+                            >
+                                <QrCode className="h-4 w-4" />
+                            </Button>
                             <Button
                                 variant={isListening ? "default" : "outline"}
                                 size="icon"
@@ -826,7 +1239,43 @@ export default function Orders() {
                                 </SelectContent>
                             </Select>
                         </div>
-
+                        {/* Manual Barcode Input Modal */}
+                        <Dialog open={isBarcodeModalOpen} onOpenChange={setIsBarcodeModalOpen}>
+                            <DialogContent className="sm:max-w-md">
+                                <DialogHeader>
+                                    <DialogTitle>Enter Barcode</DialogTitle>
+                                </DialogHeader>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium mb-2">Barcode Number</label>
+                                        <Input
+                                            type="text"
+                                            placeholder="Scan or type barcode..."
+                                            value={manualBarcode}
+                                            onChange={(e) => setManualBarcode(e.target.value)}
+                                            onKeyPress={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    handleManualBarcodeAdd();
+                                                }
+                                            }}
+                                            autoFocus
+                                            className="font-mono text-lg"
+                                        />
+                                        <p className="text-xs text-muted-foreground mt-2">
+                                            Enter the barcode number and press Enter or click Add
+                                        </p>
+                                    </div>
+                                    <div className="flex justify-end gap-2">
+                                        <Button variant="outline" onClick={() => setIsBarcodeModalOpen(false)}>
+                                            Cancel
+                                        </Button>
+                                        <Button onClick={handleManualBarcodeAdd}>
+                                            Add to Cart
+                                        </Button>
+                                    </div>
+                                </div>
+                            </DialogContent>
+                        </Dialog>
                         {/* Quick Category Filters */}
                         {/* <div className="flex space-x-2 mb-4 overflow-x-auto">
                             <Button
@@ -932,7 +1381,10 @@ export default function Orders() {
                                 <div className="flex space-x-2 mb-4">
                                     <Button
                                         variant={isReturnMode ? "destructive" : "outline"}
-                                        onClick={() => setIsReturnMode(!isReturnMode)}
+                                        onClick={() => {
+                                            setIsReturnMode(!isReturnMode)
+                                            setHasModifiedQuantities(false);
+                                        }}
                                         className="flex-1"
                                     >
                                         {isReturnMode ? "Exit Return Mode" : "Return Mode"}
@@ -1083,6 +1535,20 @@ export default function Orders() {
                                                     <p className="font-semibold text-sm ml-3 data-table">
                                                         {formatPKR(item.total)}
                                                     </p>
+
+                                                    {/* Return/Delete button - only show in return mode */}
+                                                    {isReturnMode && searchedSale?.return_status !== 'full' && (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="ghost"
+                                                            onClick={() => handleReturnItem(item)}
+                                                            className="ml-2 text-destructive hover:text-destructive"
+                                                            title="Return this item"
+                                                            disabled={searchedSale?.return_status === 'full'}
+                                                        >
+                                                            <RefreshCw className="h-4 w-4" />
+                                                        </Button>
+                                                    )}
                                                 </div>
                                             );
                                         })
@@ -1090,15 +1556,91 @@ export default function Orders() {
                                 </div>
 
                                 {/* Cart Summary */}
+                                {/* Cart Summary */}
                                 <div className="border-t border-border pt-4 space-y-2">
                                     <div className="flex justify-between text-sm">
                                         <span className="text-muted-foreground">Subtotal:</span>
                                         <span className="data-table">{formatPKR(subtotal)}</span>
                                     </div>
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-muted-foreground">Tax:</span>
-                                        <span className="data-table">{formatPKR(tax)}</span>
+
+                                    {/* Tax Section with Checkbox and Editable Input */}
+                                    <div className="flex justify-between text-sm items-center">
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="checkbox"
+                                                checked={taxEnabled}
+                                                onChange={(e) => setTaxEnabled(e.target.checked)}
+                                                className="h-4 w-4 rounded border-gray-300"
+                                            />
+                                            <span className="text-muted-foreground">Tax:</span>
+                                            {taxEnabled && (
+                                                <div className="flex items-center gap-1">
+                                                    <input
+                                                        type="number"
+                                                        value={useCustomTax ? customTax : tax}
+                                                        onChange={(e) => {
+                                                            const value = parseFloat(e.target.value) || 0;
+                                                            if (useCustomTax) {
+                                                                setCustomTax(value);
+                                                            } else {
+                                                                setTax(value);
+                                                            }
+                                                        }}
+                                                        className="w-16 px-1 py-0.5 text-sm border rounded"
+                                                        step="0.1"
+                                                    />
+                                                    <span className="text-xs">%</span>
+                                                    <button
+                                                        onClick={() => setUseCustomTax(!useCustomTax)}
+                                                        className="text-xs text-primary hover:underline ml-1"
+                                                    >
+                                                        {useCustomTax ? "Reset" : "Custom"}
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <span className="data-table">{formatPKR(taxAmount)}</span>
                                     </div>
+
+                                    {/* Discount Section with Checkbox and Editable Input */}
+                                    <div className="flex justify-between text-sm items-center">
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="checkbox"
+                                                checked={discountEnabled}
+                                                onChange={(e) => setDiscountEnabled(e.target.checked)}
+                                                className="h-4 w-4 rounded border-gray-300"
+                                            />
+                                            <span className="text-muted-foreground">Discount:</span>
+                                            {discountEnabled && (
+                                                <div className="flex items-center gap-1">
+                                                    <input
+                                                        type="number"
+                                                        value={useCustomDiscount ? customDiscount : discount}
+                                                        onChange={(e) => {
+                                                            const value = parseFloat(e.target.value) || 0;
+                                                            if (useCustomDiscount) {
+                                                                setCustomDiscount(value);
+                                                            } else {
+                                                                setDiscount(value);
+                                                            }
+                                                        }}
+                                                        className="w-16 px-1 py-0.5 text-sm border rounded"
+                                                        step="0.1"
+                                                    />
+                                                    <span className="text-xs">%</span>
+                                                    <button
+                                                        onClick={() => setUseCustomDiscount(!useCustomDiscount)}
+                                                        className="text-xs text-primary hover:underline ml-1"
+                                                    >
+                                                        {useCustomDiscount ? "Reset" : "Custom"}
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <span className="data-table text-destructive">-{formatPKR(discountAmount)}</span>
+                                    </div>
+
                                     <div className="flex justify-between font-semibold text-lg border-t border-border pt-2">
                                         <span>Total:</span>
                                         <span className="data-table">{formatPKR(total)}</span>
@@ -1154,8 +1696,8 @@ export default function Orders() {
                                         </SelectContent>
                                     </Select>
                                 </div>
-                                {
-                                    isOrderMode && <div className="mt-4">
+                                {isOrderMode && (
+                                    <div className="mt-4">
                                         <label className="block text-sm font-medium text-muted-foreground mb-2">
                                             Salesman
                                         </label>
@@ -1164,7 +1706,7 @@ export default function Orders() {
                                                 <SelectValue placeholder="Select Salesman" />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                {salesman?.data?.map((emp: any) => (
+                                                {salesman.map((emp: any) => (
                                                     <SelectItem key={emp.id} value={emp.id}>
                                                         {emp.name}
                                                     </SelectItem>
@@ -1172,7 +1714,7 @@ export default function Orders() {
                                             </SelectContent>
                                         </Select>
                                     </div>
-                                }
+                                )}
 
                                 {
                                     isOrderMode && <div className="mt-4">
@@ -1195,13 +1737,15 @@ export default function Orders() {
                                 }
 
 
-                                {/* Process Payment Button */}
-                                {/* Replace your existing Process Payment button with this */}
                                 {isReturnMode ? (
                                     <Button
                                         className="w-full mt-4"
                                         onClick={handleProcessReturn}
-                                        disabled={cart.length === 0 || processReturnMutation.isPending}
+                                        disabled={
+                                            (returnedItemsList.length === 0 && !hasModifiedQuantities) ||  // No items selected and no quantity modifications
+                                            processReturnMutation.isPending ||  // Already processing
+                                            (searchedSale?.return_status === 'full')  // Sale is fully returned already
+                                        }
                                         variant="destructive"
                                     >
                                         {processReturnMutation.isPending ? (
@@ -1209,7 +1753,7 @@ export default function Orders() {
                                         ) : (
                                             <>
                                                 <RefreshCw className="h-4 w-4 mr-2" />
-                                                Process Return
+                                                Process Return ({returnedItemsList.length > 0 ? returnedItemsList.length : (hasModifiedQuantities ? "Modified" : "0")} items)
                                             </>
                                         )}
                                     </Button>
@@ -1257,6 +1801,7 @@ export default function Orders() {
                 </div>
 
                 {/* Receipt Modal */}
+                {/* Receipt Modal */}
                 <Dialog open={isReceiptModalOpen} onOpenChange={setIsReceiptModalOpen}>
                     <DialogContent className="sm:max-w-md">
                         <DialogHeader>
@@ -1275,15 +1820,60 @@ export default function Orders() {
                                 />
                             </div>
 
-                            {/* Discount Input */}
+                            {/* Discount Input with default value indicator */}
                             <div>
-                                <label className="block text-sm font-medium mb-2">Discount</label>
+                                <label className="block text-sm font-medium mb-2">
+                                    Discount
+                                    {settings?.discount > 0 && (
+                                        <span className="text-xs text-muted-foreground ml-2">
+                                            (Default: {formatPKR(settings.discount)})
+                                        </span>
+                                    )}
+                                </label>
                                 <Input
                                     type="number"
                                     value={discount}
                                     onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)}
                                     placeholder="Enter discount amount"
                                 />
+                                {settings?.discount > 0 && discount === settings.discount && (
+                                    <p className="text-xs text-green-600 mt-1">
+                                        Using default discount from store settings
+                                    </p>
+                                )}
+                                {settings?.discount > 0 && discount !== settings.discount && (
+                                    <p className="text-xs text-orange-600 mt-1">
+                                        Custom discount applied (default: {formatPKR(settings.discount)})
+                                    </p>
+                                )}
+                            </div>
+
+                            {/* Tax Input with default value indicator */}
+                            <div>
+                                <label className="block text-sm font-medium mb-2">
+                                    Tax
+                                    {settings?.tax > 0 && (
+                                        <span className="text-xs text-muted-foreground ml-2">
+                                            (Default: {formatPKR(settings.tax)})
+                                        </span>
+                                    )}
+                                </label>
+                                <Input
+                                    type="number"
+                                    value={tax}
+                                    onChange={(e) => setTax(parseFloat(e.target.value) || 0)}
+                                    placeholder="Enter tax amount"
+                                />
+                                {settings?.tax > 0 && tax === settings.tax && (
+                                    <p className="text-xs text-green-600 mt-1">
+                                        Using default tax from store settings
+                                    </p>
+                                )}
+                                {settings?.tax > 0 && tax !== settings.tax && (
+                                    <p className="text-xs text-orange-600 mt-1">
+                                        Custom tax applied (default: {formatPKR(settings.tax)})
+                                    </p>
+                                )}
                             </div>
 
                             {/* Receipt Summary */}
@@ -1295,17 +1885,21 @@ export default function Orders() {
                                             <span>{formatPKR(subtotal)}</span>
                                         </div>
                                         <div className="flex justify-between">
+                                            <span>Tax:</span>
+                                            <span>{formatPKR(tax)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
                                             <span>Discount:</span>
                                             <span>-{formatPKR(discount)}</span>
                                         </div>
                                         <div className="flex justify-between font-bold border-t pt-2">
                                             <span>Total:</span>
-                                            <span>{formatPKR(total - discount)}</span>
+                                            <span>{formatPKR(subtotal + tax - discount)}</span>
                                         </div>
                                         {amountPaid > 0 && (
                                             <div className="flex justify-between text-green-600">
                                                 <span>Change:</span>
-                                                <span>{formatPKR(Math.max(0, amountPaid - (total - discount)))}</span>
+                                                <span>{formatPKR(Math.max(0, amountPaid - (subtotal + tax - discount)))}</span>
                                             </div>
                                         )}
                                     </div>
