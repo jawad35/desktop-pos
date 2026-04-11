@@ -1835,6 +1835,8 @@ export function setupIpcHandlers() {
         }
     });
 
+
+    
     ipcMain.handle('app:restart', () => {
         app.relaunch();
         app.exit();

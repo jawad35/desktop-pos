@@ -144,16 +144,16 @@ export default function AdminDashboard() {
         );
     }
 
-    if (user?.role !== 'admin') {
-        return (
-            <div className="flex items-center justify-center min-h-screen">
-                <div className="text-center">
-                    <h2 className="text-2xl font-bold text-destructive mb-4">Access Denied</h2>
-                    <p className="text-muted-foreground">This dashboard is only accessible to administrators.</p>
-                </div>
-            </div>
-        );
-    }
+    // if (user?.role === 'admin') {
+    //     return (
+    //         <div className="flex items-center justify-center min-h-screen">
+    //             <div className="text-center">
+    //                 <h2 className="text-2xl font-bold text-destructive mb-4">Access Denied</h2>
+    //                 <p className="text-muted-foreground">This dashboard is only accessible to administrators.</p>
+    //             </div>
+    //         </div>
+    //     );
+    // }
 
     return (
         <div className="flex-1 flex flex-col overflow-hidden">
