@@ -3,6 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { getDb } from './database.js';
 import crypto from 'crypto';
+import licenseManager from './licenseManager.js';
+import axios from 'axios';
 
 export function setupIpcHandlers() {
 
@@ -1735,89 +1737,111 @@ export function setupIpcHandlers() {
 
     // ========== SETTINGS ==========
     ipcMain.handle('db:getSettings', async () => {
-        try {
-            const db = getDb();
-            // Use single quotes for string literals in SQLite
-            const settings = db.prepare("SELECT * FROM settings WHERE id = 'default'").get();
-
-            console.log('🔍 [GET SETTINGS] Raw settings from DB:', settings);
-
-            // If no settings found, create default
-            if (!settings) {
-                console.log('🔍 [GET SETTINGS] No settings found, creating default...');
-                const insertStmt = db.prepare(`
-                INSERT INTO settings (id, tax, discount) 
-                VALUES ('default', 0, 0)
-            `);
-                insertStmt.run();
-
-                // Fetch again after insert
-                const newSettings = db.prepare("SELECT * FROM settings WHERE id = 'default'").get();
-                console.log('🔍 [GET SETTINGS] Created default settings:', newSettings);
-                return { success: true, data: newSettings };
-            }
-
-            return { success: true, data: settings };
-        } catch (error) {
-            console.error('🔍 [GET SETTINGS] Error:', error);
-            return { success: false, error: error.message, data: { tax: 0, discount: 0 } };
-        }
-    });
-
-   ipcMain.handle('db:updateSettings', async (event, settingsData) => {
     try {
-        console.log('🔍 [UPDATE SETTINGS] Received data:', settingsData);
-        
         const db = getDb();
-        
-        // First, check if settings record exists
-        const checkStmt = db.prepare(`SELECT * FROM settings WHERE id = 'default'`);
-        const existingSettings = checkStmt.get();
-        
-        console.log('🔍 [UPDATE SETTINGS] Existing settings:', existingSettings);
-        
-        if (!existingSettings) {
-            // Insert if not exists
-            console.log('🔍 [UPDATE SETTINGS] No settings found, inserting default...');
-            const insertStmt = db.prepare(`
-                INSERT INTO settings (id, tax, discount) 
-                VALUES ('default', ?, ?)
-            `);
-            insertStmt.run(settingsData.tax || 0, settingsData.discount || 0);
-            console.log('🔍 [UPDATE SETTINGS] Settings inserted successfully');
-            return { success: true };
+
+        // Ensure visible_tabs column exists
+        try {
+            db.exec(`ALTER TABLE settings ADD COLUMN visible_tabs TEXT DEFAULT '[]'`);
+            console.log('✅ Added visible_tabs column to settings table');
+        } catch (error) {
+            if (!error.message.includes('duplicate column name')) {
+                console.error('Error adding visible_tabs column:', error);
+            }
         }
-        
-        // Update existing settings
-        const updateStmt = db.prepare(`
-            UPDATE settings 
-            SET tax = ?, discount = ?, updated_at = CURRENT_TIMESTAMP 
-            WHERE id = 'default'
-        `);
-        
-        const result = updateStmt.run(
-            settingsData.tax || 0, 
-            settingsData.discount || 0
-        );
-        
-        console.log('🔍 [UPDATE SETTINGS] Update result:', {
-            changes: result.changes,
-            tax: settingsData.tax,
-            discount: settingsData.discount
-        });
-        
-        // Verify the update
-        const verifyStmt = db.prepare(`SELECT * FROM settings WHERE id = 'default'`);
-        const updatedSettings = verifyStmt.get();
-        console.log('🔍 [UPDATE SETTINGS] Verified updated settings:', updatedSettings);
-        
-        return { success: result.changes > 0 };
-        
+
+        const settings = db.prepare("SELECT * FROM settings WHERE id = 'default'").get();
+
+        if (!settings) {
+            const insertStmt = db.prepare(`
+                INSERT INTO settings (id, tax, discount, visible_tabs) 
+                VALUES ('default', 0, 0, '[]')
+            `);
+            insertStmt.run();
+            
+            const newSettings = db.prepare("SELECT * FROM settings WHERE id = 'default'").get();
+            newSettings.visible_tabs = [];
+            return { success: true, data: newSettings };
+        }
+
+        // Parse visible_tabs from string to array
+        if (settings.visible_tabs && typeof settings.visible_tabs === 'string') {
+            try {
+                settings.visible_tabs = JSON.parse(settings.visible_tabs);
+            } catch (e) {
+                settings.visible_tabs = [];
+            }
+        } else if (!settings.visible_tabs) {
+            settings.visible_tabs = [];
+        }
+
+        return { success: true, data: settings };
     } catch (error) {
-        console.error('🔍 [UPDATE SETTINGS] Error:', error);
-        return { success: false, error: error.message };
+        console.error('Error getting settings:', error);
+        return { success: false, error: error.message, data: { tax: 0, discount: 0, visible_tabs: [] } };
     }
 });
+
+    ipcMain.handle('db:updateSettings', async (event, settingsData) => {
+        try {
+            console.log('🔍 [UPDATE SETTINGS] Received data:', settingsData);
+
+            const db = getDb();
+
+            // Build update query dynamically based on what fields are provided
+            const updates = [];
+            const params = [];
+
+            if (settingsData.tax !== undefined) {
+                updates.push('tax = ?');
+                params.push(settingsData.tax);
+            }
+            if (settingsData.discount !== undefined) {
+                updates.push('discount = ?');
+                params.push(settingsData.discount);
+            }
+            if (settingsData.visible_tabs !== undefined) {
+                updates.push('visible_tabs = ?');
+                // Ensure visible_tabs is stringified
+                const tabsValue = Array.isArray(settingsData.visible_tabs)
+                    ? JSON.stringify(settingsData.visible_tabs)
+                    : settingsData.visible_tabs;
+                params.push(tabsValue);
+            }
+
+            if (updates.length === 0) {
+                return { success: false, error: 'No fields to update' };
+            }
+
+            updates.push('updated_at = CURRENT_TIMESTAMP');
+            params.push('default');
+
+            const query = `UPDATE settings SET ${updates.join(', ')} WHERE id = ?`;
+            console.log('🔍 [UPDATE SETTINGS] Query:', query);
+            console.log('🔍 [UPDATE SETTINGS] Params:', params);
+
+            const updateStmt = db.prepare(query);
+            const result = updateStmt.run(...params);
+
+            // Fetch and return updated settings
+            const updatedSettings = db.prepare(`SELECT * FROM settings WHERE id = 'default'`).get();
+
+            // Parse visible_tabs for response
+            if (updatedSettings.visible_tabs && typeof updatedSettings.visible_tabs === 'string') {
+                try {
+                    updatedSettings.visible_tabs = JSON.parse(updatedSettings.visible_tabs);
+                } catch (e) {
+                    updatedSettings.visible_tabs = [];
+                }
+            }
+
+            return { success: result.changes > 0, data: updatedSettings };
+
+        } catch (error) {
+            console.error('🔍 [UPDATE SETTINGS] Error:', error);
+            return { success: false, error: error.message };
+        }
+    });
 
     ipcMain.handle('db:getTransactionLogs', async (event, filters = {}) => {
         try {
@@ -1836,7 +1860,131 @@ export function setupIpcHandlers() {
     });
 
 
-    
+    // In ipcHandlers.js, add these handlers:
+
+    ipcMain.handle('app:verifyAdminPin', async (event, pin) => {
+        try {
+            // Load the locally stored license
+            const licenseData = licenseManager.loadLicense();
+            if (!licenseData) {
+                return { success: false, error: 'No license found. Please activate first.' };
+            }
+
+            // Compare the entered PIN with the stored admin_pin
+            // Note: You need to store admin_pin in the license data during activation
+            const isValid = licenseData.admin_pin === pin;
+
+            return { success: isValid };
+        } catch (error) {
+            console.error('Error verifying admin PIN:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Update admin PIN - sync with server and local
+    ipcMain.handle('app:updateAdminPin', async (event, oldPin, newPin) => {
+        try {
+            // Load current license
+            const licenseData = licenseManager.loadLicense();
+
+            if (!licenseData) {
+                return { success: false, error: 'No license found' };
+            }
+
+            // Verify old PIN locally first
+            if (licenseData.admin_pin !== oldPin) {
+                return { success: false, error: 'Invalid current PIN' };
+            }
+
+            // Get the license key from stored data
+            const licenseKey = licenseData.license_key;
+
+            // Call server API to update PIN in database
+            let serverUpdateSuccess = false;
+            const API_URL = 'http://localhost:5002/api';
+
+            try {
+                const response = await axios.post(`${API_URL}/admin-pin/change`, {
+                    licenseKey: licenseKey,
+                    oldPin: oldPin,
+                    newPin: newPin
+                }, {
+                    timeout: 30000,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (response.data.success) {
+                    serverUpdateSuccess = true;
+                    console.log('PIN updated on server successfully');
+                } else {
+                    console.error('Server PIN update failed:', response.data.message);
+                    return {
+                        success: false,
+                        error: response.data.message || 'Failed to update PIN on server'
+                    };
+                }
+            } catch (serverError) {
+                console.error('Server error during PIN update:', serverError.message);
+                return {
+                    success: false,
+                    error: 'Network error. Could not update PIN on server.'
+                };
+            }
+
+            // If server update successful, update local license
+            if (serverUpdateSuccess) {
+                licenseData.admin_pin = newPin;
+                const saved = licenseManager.saveLicense(licenseData);
+
+                if (saved) {
+                    return { success: true, message: 'PIN updated successfully' };
+                } else {
+                    return { success: false, error: 'PIN updated on server but failed to save locally' };
+                }
+            }
+
+            return { success: false, error: 'Unknown error occurred' };
+        } catch (error) {
+            console.error('Error updating admin PIN:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    function getLoginTypeFile() {
+        const userDataPath = app.getPath('userData');
+        return path.join(userDataPath, 'login_type.json');
+    }
+
+    ipcMain.handle('app:getLoginType', async () => {
+        try {
+            const filePath = getLoginTypeFile();
+            if (fs.existsSync(filePath)) {
+                const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                return { success: true, login_type: data.login_type || 'operator' };
+            }
+            return { success: true, login_type: 'operator' };
+        } catch (error) {
+            console.error('Error getting login type:', error);
+            return { success: true, login_type: 'operator' };
+        }
+    });
+
+    // Set login type (used after PIN verification)
+    ipcMain.handle('app:setLoginType', async (event, loginType) => {
+        try {
+            const filePath = getLoginTypeFile();
+            fs.writeFileSync(filePath, JSON.stringify({
+                login_type: loginType,
+                updated_at: new Date().toISOString()
+            }));
+            return { success: true };
+        } catch (error) {
+            console.error('Error setting login type:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+
     ipcMain.handle('app:restart', () => {
         app.relaunch();
         app.exit();

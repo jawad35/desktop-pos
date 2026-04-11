@@ -14,7 +14,7 @@ import {
   Phone,
   CreditCard,
   Package,
-  DollarSign,
+  Banknote,
   RefreshCw
 } from "lucide-react";
 import { useHeader } from "@/contexts/HeaderContext";
@@ -570,7 +570,7 @@ export default function ItemDetails() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center">
-                  <DollarSign className="h-5 w-5 mr-2" />
+                  <Banknote className="h-5 w-5 mr-2" />
                   Amount Summary
                 </CardTitle>
               </CardHeader>

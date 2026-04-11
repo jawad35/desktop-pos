@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "../services/electron-api";
-import { Search, Filter, RefreshCw, Recycle, CheckCircle, AlertTriangle, DollarSign } from "lucide-react";
+import { Search, Filter, RefreshCw, Recycle, CheckCircle, AlertTriangle, Banknote } from "lucide-react";
 
 export default function DamagedStockPage() {
     const [filters, setFilters] = useState({
@@ -92,7 +92,7 @@ export default function DamagedStockPage() {
                                 <p className="text-sm text-muted-foreground">Total Loss</p>
                                 <p className="text-2xl font-bold text-destructive">Rs. {totalLoss.toLocaleString()}</p>
                             </div>
-                            <DollarSign className="h-8 w-8 text-destructive" />
+                            <Banknote className="h-8 w-8 text-destructive" />
                         </div>
                     </CardContent>
                 </Card>

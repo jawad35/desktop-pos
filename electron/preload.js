@@ -159,25 +159,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     getSaleByReceiptNumber: async (receiptNumber) => {
         try {
-        const result = await ipcRenderer.invoke('db:getSaleByReceiptNumber', receiptNumber);
-        console.log('getSaleByReceiptNumber result:', result);
-        
-        // If result is null or has success false
-        if (!result) {
+            const result = await ipcRenderer.invoke('db:getSaleByReceiptNumber', receiptNumber);
+            console.log('getSaleByReceiptNumber result:', result);
+
+            // If result is null or has success false
+            if (!result) {
+                return null;
+            }
+
+            // If result has success property (old format)
+            if (result.success === false) {
+                return null;
+            }
+
+            // If result has data property, return that, otherwise return result
+            return result.data || result;
+        } catch (error) {
+            console.error('Error in getSaleByReceiptNumber:', error);
             return null;
         }
-        
-        // If result has success property (old format)
-        if (result.success === false) {
-            return null;
-        }
-        
-        // If result has data property, return that, otherwise return result
-        return result.data || result;
-    } catch (error) {
-        console.error('Error in getSaleByReceiptNumber:', error);
-        return null;
-    }
     },
     getSaleItems: async (saleId) => {
         const result = await ipcRenderer.invoke('db:getSaleItems', saleId);
@@ -194,7 +194,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateSale: async (id, saleData) => {
         console.log(id, saleData, 'aho aho')
         const result = await ipcRenderer.invoke('db:updateSale', id, saleData);
-        console.log(result,'pta chal gya')
+        console.log(result, 'pta chal gya')
         return result;
     },
 
@@ -314,7 +314,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return result;
     },
     updateSettings: async (settings) => {
-        console.log(settings,'han wai ki')
+        console.log(settings, 'han wai ki')
         const result = await ipcRenderer.invoke('db:updateSettings', settings);
         return result;
     },
@@ -389,8 +389,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return result;
     },
 
+    // In preload.js, add:
+
+    // Admin PIN methods
+    verifyAdminPin: async (pin) => {
+        return await ipcRenderer.invoke('app:verifyAdminPin', pin);
+    },
+    updateAdminPin: async (oldPin, newPin) => {
+        return await ipcRenderer.invoke('app:updateAdminPin', oldPin, newPin);
+    },
+    getLoginType: async () => {
+        return await ipcRenderer.invoke('app:getLoginType');
+    },
+    setLoginType: async (loginType) => {
+        return await ipcRenderer.invoke('app:setLoginType', loginType);
+    },
+
+    activateLicenseWithPin: async (licenseKey, adminPin) => {
+        return await ipcRenderer.invoke('license:activateWithPin', licenseKey, adminPin);
+    },
+
     restartApp: async () => {
         return await ipcRenderer.invoke('app:restart');
     },
+
 
 });

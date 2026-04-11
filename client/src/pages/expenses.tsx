@@ -22,7 +22,6 @@ import {
   Calculator,
   Receipt,
   TrendingUp,
-  DollarSign,
   ChevronRight,
   ChevronLeft,
   List,
@@ -425,7 +424,7 @@ export default function Expenses() {
   const getPaymentMethodIcon = (method: string) => {
     switch (method?.toLowerCase()) {
       case 'cash':
-        return <DollarSign className="h-3 w-3" />;
+        return <Banknote className="h-3 w-3" />;
       case 'card':
         return <Receipt className="h-3 w-3" />;
       default:

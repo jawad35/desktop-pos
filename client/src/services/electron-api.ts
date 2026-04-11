@@ -5,6 +5,7 @@ type ElectronAPI = {
     login: (email: string, password: string) => Promise<any>;
     logout: () => Promise<void>;
     getCurrentUser: () => Promise<any>;
+    
 
     // Products
     getProducts: (filters?: any) => Promise<any>;
@@ -96,6 +97,13 @@ type ElectronAPI = {
     activateLicense: (licenseKey: string) => Promise<any>;
     checkLicense: () => Promise<any>;
     verifyLicenseOnline: () => Promise<any>;
+    activateLicenseWithPin: (licenseKey: string, adminPin: string) => Promise<any>;  // Add this line
+
+    // Add to ElectronAPI interface
+    verifyAdminPin: (pin: string) => Promise<any>;
+    updateAdminPin: (oldPin: string, newPin: string) => Promise<any>;
+    getLoginType: () => Promise<any>;
+    setLoginType: (loginType: string) => Promise<any>;
 };
 
 // Check if running in Electron
@@ -112,7 +120,14 @@ const electronAPI: ElectronAPI = {
     // License methods
     activateLicense: (licenseKey) => window.electronAPI.activateLicense(licenseKey),
     checkLicense: () => window.electronAPI.checkLicense(),
+    activateLicenseWithPin: (licenseKey, adminPin) => window.electronAPI.activateLicenseWithPin(licenseKey, adminPin),  // Add this line
     verifyLicenseOnline: () => window.electronAPI.verifyLicenseOnline(),
+
+    // Add to electronAPI object
+    verifyAdminPin: (pin) => window.electronAPI.verifyAdminPin(pin),
+    updateAdminPin: (oldPin, newPin) => window.electronAPI.updateAdminPin(oldPin, newPin),
+    getLoginType: () => window.electronAPI.getLoginType(),
+    setLoginType: (loginType) => window.electronAPI.setLoginType(loginType),
 
 
     // Products
@@ -199,12 +214,17 @@ const electronAPI: ElectronAPI = {
     getDataLocation: () => window.electronAPI.getDataLocation(),
     backupData: () => window.electronAPI.backupData(),
     openDataFolder: () => window.electronAPI.openDataFolder(),
+    
 };
 
 // API implementation for Web (your existing backend)
 const webAPI: ElectronAPI = {
     login: (email, password) => fetch('/api/login', { method: 'POST', body: JSON.stringify({ email, password }) }).then(r => r.json()),
     logout: () => fetch('/api/logout').then(r => r.json()),
+    activateLicense: (licenseKey) => fetch('/api/license/activate', { method: 'POST', body: JSON.stringify({ license_key: licenseKey }) }).then(r => r.json()),
+    activateLicenseWithPin: (licenseKey, adminPin) => fetch('/api/license/activate-with-pin', { method: 'POST', body: JSON.stringify({ license_key: licenseKey, admin_pin: adminPin }) }).then(r => r.json()),  // Add this line
+    checkLicense: () => fetch('/api/license/check').then(r => r.json()),
+    verifyLicenseOnline: () => fetch('/api/license/verify-online').then(r => r.json()),
     getCurrentUser: () => fetch('/api/me').then(r => r.json()),
     getProducts: () => fetch('/api/products').then(r => r.json()),
     getProduct: (id) => fetch(`/api/products/${id}`).then(r => r.json()),

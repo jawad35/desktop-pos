@@ -14,7 +14,7 @@ import { Link } from "wouter";
 import {
     TrendingUp,
     TrendingDown,
-    DollarSign,
+    Banknote,
     CreditCard,
     Users,
     Package,
@@ -327,7 +327,7 @@ export default function AdminDashboard() {
                                             <p className="text-sm text-blue-600">Total Sales</p>
                                         </div>
                                         <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                                            <DollarSign className="h-6 w-6 text-blue-600" />
+                                            <Banknote className="h-6 w-6 text-blue-600" />
                                         </div>
                                     </div>
                                 </CardContent>

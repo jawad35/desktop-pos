@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import {
   TrendingUp,
-  DollarSign,
+  Banknote,
   AlertTriangle,
   Package,
   CreditCard,
@@ -22,7 +22,7 @@ export default function Home() {
   const { toast } = useToast();
   const [isAuthenticated, setIsAuthenticated] = useState(true); // Electron app is always authenticated
 
-  
+
   // Fetch dashboard stats
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ["dashboardStats"],
@@ -98,7 +98,7 @@ export default function Home() {
                   </p>
                 </div>
                 <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center">
-                  <DollarSign className="h-6 w-6 text-primary" />
+                  <Banknote className="h-6 w-6 text-primary" />
                 </div>
               </div>
             </CardContent>

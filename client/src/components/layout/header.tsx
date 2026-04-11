@@ -1,11 +1,12 @@
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Bell, Menu, User, LogOut, AlertTriangle, Clock } from "lucide-react";
+import { Bell, Menu, User, LogOut, AlertTriangle, Clock, Shield } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { User as UserType } from "@/types/api";
 import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { useLocation } from "wouter";
+import { useLoginType } from "@/hooks/useLoginType";
 
 interface HeaderProps {
   title: string;
@@ -13,8 +14,42 @@ interface HeaderProps {
   onMenuClick?: () => void;
 }
 
+// Helper function to format time remaining
+function formatTimeRemaining(seconds: number): string {
+  if (seconds <= 0) return 'Expired';
+  
+  const years = Math.floor(seconds / (365 * 24 * 60 * 60));
+  const months = Math.floor((seconds % (365 * 24 * 60 * 60)) / (30 * 24 * 60 * 60));
+  const weeks = Math.floor((seconds % (30 * 24 * 60 * 60)) / (7 * 24 * 60 * 60));
+  const days = Math.floor((seconds % (7 * 24 * 60 * 60)) / (24 * 60 * 60));
+  const hours = Math.floor((seconds % (24 * 60 * 60)) / (60 * 60));
+  const minutes = Math.floor((seconds % (60 * 60)) / 60);
+  const secs = seconds % 60;
+
+  if (years > 0) {
+    return `${years} year${years > 1 ? 's' : ''}`;
+  }
+  if (months > 0) {
+    return `${months} month${months > 1 ? 's' : ''}`;
+  }
+  if (weeks > 0) {
+    return `${weeks} week${weeks > 1 ? 's' : ''}`;
+  }
+  if (days > 0) {
+    return `${days} day${days > 1 ? 's' : ''}`;
+  }
+  if (hours > 0) {
+    return `${hours} hour${hours > 1 ? 's' : ''}`;
+  }
+  if (minutes > 0) {
+    return `${minutes} minute${minutes > 1 ? 's' : ''}`;
+  }
+  return `${secs} second${secs > 1 ? 's' : ''}`;
+}
+
 export function Header({ title, subtitle, onMenuClick }: HeaderProps) {
   const { user, shop } = useAuth();
+  const { loginType, switchToOperator } = useLoginType();
   const [licenseStatus, setLicenseStatus] = useState<{
     isExpired: boolean;
     isGracePeriod: boolean;
@@ -53,13 +88,6 @@ export function Header({ title, subtitle, onMenuClick }: HeaderProps) {
           const graceRemaining = Math.max(0, gracePeriodSeconds - secondsExpired);
           const isGracePeriod = isExpired && graceRemaining > 0;
 
-          // console.log('Debug values:', {
-          //   isExpired,
-          //   secondsExpired,
-          //   graceRemaining,
-          //   isGracePeriod
-          // });
-
           // If graceRemaining becomes 0, redirect
           if (isExpired && graceRemaining === 0 && !hasRedirected.current) {
             console.log('License expired - redirecting to activation');
@@ -69,14 +97,10 @@ export function Header({ title, subtitle, onMenuClick }: HeaderProps) {
             return;
           }
 
-          // Format time left text for UI
+          // Format time left text using the new formatter
           let timeLeftText = '';
           if (!isExpired) {
-            if (timeLeftSeconds < 60) {
-              timeLeftText = `${timeLeftSeconds} seconds`;
-            } else {
-              timeLeftText = `${Math.floor(timeLeftSeconds / 60)} minutes`;
-            }
+            timeLeftText = formatTimeRemaining(timeLeftSeconds);
           } else if (isGracePeriod) {
             timeLeftText = `${graceRemaining} seconds of grace period remaining`;
           }
@@ -96,11 +120,16 @@ export function Header({ title, subtitle, onMenuClick }: HeaderProps) {
   };
 
   const handleLogout = async () => {
+    // Switch back to operator mode on logout
+    if (loginType === 'admin') {
+      await switchToOperator();
+    }
+    
     if (window.electronAPI && window.electronAPI.clearLicense) {
       await window.electronAPI.clearLicense();
     }
     localStorage.removeItem("token");
-    window.location.href = "/";
+    window.location.reload();
   };
 
   const [, setLocation] = useLocation();
@@ -137,8 +166,8 @@ export function Header({ title, subtitle, onMenuClick }: HeaderProps) {
         </div>
       )}
 
-      {/* Low License Warning (within 30 seconds of expiry) */}
-      {licenseStatus && !licenseStatus.isExpired && licenseStatus.timeLeft <= 30 && (
+      {/* Low License Warning (within 30 days) */}
+      {licenseStatus && !licenseStatus.isExpired && licenseStatus.timeLeft <= 30 * 24 * 60 * 60 && (
         <div className="w-full py-2 px-4 text-center text-sm font-medium bg-orange-500 text-white animate-pulse">
           <div className="flex items-center justify-center gap-2">
             <AlertTriangle className="h-4 w-4" />
@@ -172,9 +201,22 @@ export function Header({ title, subtitle, onMenuClick }: HeaderProps) {
           </div>
 
           <div className="flex items-center space-x-4">
+            {/* Admin/Operator Mode Badge */}
+            <Badge 
+              variant={loginType === 'admin' ? "destructive" : "default"}
+              className="hidden sm:flex items-center gap-1"
+            >
+              {loginType === 'admin' ? (
+                <Shield className="h-3 w-3" />
+              ) : (
+                <User className="h-3 w-3" />
+              )}
+              {loginType === 'admin' ? 'Admin' : 'Operator'}
+            </Badge>
+
             {/* License Status Badge */}
             {licenseStatus && !licenseStatus.isExpired && (
-              <Badge variant={licenseStatus.timeLeft <= 60 ? "destructive" : "secondary"} className="hidden sm:flex">
+              <Badge variant={licenseStatus.timeLeft <= 7 * 24 * 60 * 60 ? "destructive" : "secondary"} className="hidden sm:flex">
                 <Clock className="h-3 w-3 mr-1" />
                 {licenseStatus.timeLeftText} left
               </Badge>

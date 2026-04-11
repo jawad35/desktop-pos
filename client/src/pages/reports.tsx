@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatPKR } from "@/lib/currency";
-import { Calendar, Download, BarChart3, TrendingUp, DollarSign, Package } from "lucide-react";
+import { Calendar, Download, BarChart3, TrendingUp, Banknote, Package } from "lucide-react";
 import { format, subDays, startOfMonth, endOfMonth } from "date-fns";
 import { Sale, Product, Expense, DashboardStats } from "@/types/api";
 import { useHeader } from "@/contexts/HeaderContext";
@@ -186,7 +186,7 @@ export default function Reports() {
                   <p className="text-2xl font-bold text-secondary">{formatPKR(totalRevenue)}</p>
                 </div>
                 <div className="w-12 h-12 bg-secondary/10 rounded-lg flex items-center justify-center">
-                  <DollarSign className="h-6 w-6 text-secondary" />
+                  <Banknote className="h-6 w-6 text-secondary" />
                 </div>
               </div>
             </CardContent>

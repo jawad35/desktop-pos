@@ -47,6 +47,7 @@ class LicenseManager {
             const dataToSave = {
                 license_key: licenseData.license_key,
                 hardware_id: licenseData.hardware_id,
+                admin_pin: licenseData.admin_pin,
                 expiry_date: licenseData.expiry_date,
                 plan_type: licenseData.plan_type,
                 activated_at: licenseData.activated_at,
