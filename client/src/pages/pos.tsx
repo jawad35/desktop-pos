@@ -42,10 +42,13 @@ interface CartItem {
     id: string;
     name: string;
     price: string;
+    cost_price: string;
     quantity: number;
     total: number;
+    profit: number;
+    profit_per_unit?: number;
     imageUrl: string;
-    availableStock: number; // Add this line
+    availableStock: number;
 }
 
 export default function Orders() {
@@ -168,46 +171,34 @@ export default function Orders() {
             id: item.id,
             name: item.name,
             quantity: item.quantity,
-            total: item.total
+            total: item.total,
+            profit_per_unit: item.profit_per_unit
         });
 
-        // Add to returned items list with image
+        // Calculate profit loss for this item
+        const profitPerUnit = item.profit_per_unit ||
+            (parseFloat(item.price) - parseFloat(item.cost_price || "0"));
+        const profitLoss = profitPerUnit * item.quantity;
+
+        // Add to returned items list with profit_loss
         setReturnedItemsList(prev => [...prev, {
             ...item,
+            profit_loss: profitLoss,
             returnReason: returnReason || "Product return",
             returnDate: new Date().toISOString()
         }]);
 
         // Remove from cart
         setCart(cart.filter(cartItem => cartItem.id !== item.id));
-
-        // Clear modified flag since we're moving to return list
         setHasModifiedQuantities(false);
 
         toast({
             title: "Item Marked for Return",
-            description: `${item.quantity} x ${item.name} will be returned when you process.`,
+            description: `${item.quantity} x ${item.name} will be returned when you process. (Profit loss: ${formatPKR(profitLoss)})`,
         });
     };
 
-    // Function to update cart item quantity
-    const updateCartItemQuantity = (itemId: string, newQuantity: number) => {
-        if (newQuantity <= 0) {
-            // Remove item if quantity becomes 0
-            setCart(cart.filter(item => item.id !== itemId));
-        } else {
-            setCart(cart.map(item =>
-                item.id === itemId
-                    ? {
-                        ...item,
-                        quantity: newQuantity,
-                        total: newQuantity * parseFloat(item.price),
-                        availableStock: item.availableStock
-                    }
-                    : item
-            ));
-        }
-    };
+
 
     // Fetch current settings
 
@@ -431,9 +422,7 @@ export default function Orders() {
     // Update the searchSaleMutation
     const searchSaleMutation = useMutation({
         mutationFn: async (receiptNumber: string) => {
-            console.log("🔍 [SEARCH] Looking for receipt:", receiptNumber);
             const result = await api.getSaleByReceiptNumber(receiptNumber);
-            console.log("🔍 [SEARCH] API result:", result);
             if (!result) {
                 throw new Error("Sale not found");
             }
@@ -456,7 +445,6 @@ export default function Orders() {
 
             setSearchedSale(data);
 
-
             // Load original sale's tax and discount
             const originalTax = parseFloat(data.tax) || 0;
             const originalDiscount = parseFloat(data.discount) || 0;
@@ -464,33 +452,34 @@ export default function Orders() {
             setDiscount(originalDiscount);
             setCustomTax(originalTax);
             setCustomDiscount(originalDiscount);
-            setUseCustomTax(false);
-            setUseCustomDiscount(false);
-            setTaxEnabled(true);
-            setDiscountEnabled(true);
-            // Enable/disable based on whether values are 0
             setTaxEnabled(originalTax !== 0);
             setDiscountEnabled(originalDiscount !== 0);
-
-            // Reset custom flags
             setUseCustomTax(false);
             setUseCustomDiscount(false);
-            console.log('Original receipt tax:', originalTax, 'discount:', originalDiscount);
 
-            // IMPORTANT: Map the items correctly - image_url is directly on the item
-            const cartItems = data.items?.map((item: any) => ({
-                id: item.product_id,
-                name: item.product_name || "Product",  // Use product_name from the query
-                price: item.unit_price,
-                quantity: item.quantity,
-                total: parseFloat(item.total),
-                imageUrl: item.image_url,  // Directly from the item, not item.product
-                availableStock: item.stock || 0,  // Use stock from the query
-                originalQuantity: item.quantity,
-            })) || [];
+            // Map cart items with profit per unit
+            const cartItems = data.items?.map((item: any) => {
+                // Get profit from sale_items (this is the total profit for this line item)
+                const totalProfit = parseFloat(item.profit) || 0;
+                // Calculate profit per unit
+                const profitPerUnit = item.quantity > 0 ? totalProfit / item.quantity : 0;
 
-            console.log('Mapped cart items with images:', cartItems.map(i => ({ name: i.name, hasImage: !!i.imageUrl })));
+                return {
+                    id: item.product_id,
+                    name: item.product_name || "Product",
+                    price: item.unit_price,
+                    cost_price: item.cost_price || "0",
+                    quantity: item.quantity,
+                    total: parseFloat(item.total),
+                    profit: totalProfit,
+                    profit_per_unit: profitPerUnit,
+                    imageUrl: item.image_url,
+                    availableStock: item.stock || 0,
+                    originalQuantity: item.quantity,
+                };
+            }) || [];
 
+            console.log('Cart items with profit per unit:', cartItems);
             setCart(cartItems);
             setReturnedItemsList([]);
 
@@ -579,6 +568,8 @@ export default function Orders() {
     const addToCart = (product: any) => {
         const existingItem = cart.find(item => item.id === product.id);
         const productPrice = parseFloat(product.selling_price);
+        const productCost = parseFloat(product.cost_price || 0);
+        const profitPerUnit = productPrice - productCost;
 
         if (existingItem) {
             if (existingItem.quantity >= product.stock) {
@@ -595,6 +586,7 @@ export default function Orders() {
                         ...item,
                         quantity: item.quantity + 1,
                         total: (item.quantity + 1) * productPrice,
+                        profit: (item.quantity + 1) * profitPerUnit,
                         availableStock: product.stock
                     }
                     : item
@@ -604,9 +596,11 @@ export default function Orders() {
                 id: product.id,
                 name: product.name,
                 price: product.selling_price,
-                imageUrl: product.image_url,
+                cost_price: product.cost_price || "0",
                 quantity: 1,
                 total: productPrice,
+                profit: profitPerUnit,
+                imageUrl: product.image_url,
                 availableStock: product.stock
             }]);
         }
@@ -618,14 +612,11 @@ export default function Orders() {
                 if (item.id === id) {
                     const newQuantity = item.quantity + change;
 
-                    // Prevent going below 1
                     if (newQuantity < 1) {
                         return item;
                     }
 
-                    // For return mode, don't check available stock
                     if (!isReturnMode) {
-                        // Prevent exceeding available stock only in sale mode
                         if (newQuantity > item.availableStock) {
                             toast({
                                 title: "Insufficient Stock",
@@ -635,7 +626,6 @@ export default function Orders() {
                             return item;
                         }
                     } else {
-                        // In return mode, track reduced quantities
                         const originalItem = searchedSale?.items?.find((saleItem: any) => saleItem.product_id === id);
                         if (originalItem && newQuantity < originalItem.quantity) {
                             const returnQuantity = originalItem.quantity - newQuantity;
@@ -649,7 +639,6 @@ export default function Orders() {
                             });
                             setHasModifiedQuantities(true);
                         } else if (originalItem && newQuantity >= originalItem.quantity) {
-                            // If quantity increased back to original, remove from reduced items
                             setReducedItemsMap(prev => {
                                 const newMap = new Map(prev);
                                 newMap.delete(id);
@@ -661,15 +650,19 @@ export default function Orders() {
                         }
                     }
 
+                    const itemPrice = parseFloat(item.price);
+                    const itemCost = parseFloat(item.cost_price || "0");
+                    const profitPerUnit = itemPrice - itemCost;
+
                     return {
                         ...item,
                         quantity: newQuantity,
-                        total: newQuantity * parseFloat(item.price)
+                        total: newQuantity * itemPrice,
+                        profit: newQuantity * profitPerUnit
                     };
                 }
                 return item;
             });
-
             return updatedCart;
         });
     };
@@ -686,7 +679,6 @@ export default function Orders() {
     const taxAmount = (subtotal * currentTax) / 100;
     const discountAmount = (subtotal * currentDiscount) / 100;
     const total = subtotal + taxAmount - discountAmount;
-
     const handleProcessPayment = () => {
         if (cart.length === 0) {
             toast({
@@ -698,14 +690,17 @@ export default function Orders() {
         }
 
         const receiptNumber = `RCP-${Date.now()}`;
+        const totalProfit = cart.reduce((sum, item) => sum + item.profit, 0);
+
         const items = cart.map(item => ({
             productId: item.id,
             quantity: item.quantity,
             unitPrice: parseFloat(item.price),
             total: item.total.toString(),
+            costPrice: parseFloat(item.cost_price || "0"),
+            profit: item.profit.toString(),
         }));
 
-        // Use 0 if tax is disabled, otherwise use the current tax value
         const currentTaxValue = taxEnabled ? (useCustomTax ? customTax : tax) : 0;
         const currentDiscountValue = discountEnabled ? (useCustomDiscount ? customDiscount : discount) : 0;
 
@@ -718,9 +713,10 @@ export default function Orders() {
             customerName: customerName || null,
             customerPhone: customerPhone || null,
             subtotal: subtotal.toString(),
-            tax: currentTaxValue.toString(),  // Will be 0 if disabled
-            discount: currentDiscountValue.toString(),  // Will be 0 if disabled
+            tax: currentTaxValue.toString(),
+            discount: currentDiscountValue.toString(),
             total: totalValue.toString(),
+            total_profit: totalProfit.toString(),  // Add total profit
             paymentMethod,
             paymentStatus,
             employeeId: employeeId || null,
@@ -729,7 +725,7 @@ export default function Orders() {
         };
 
         console.log('Sending saleData:', saleData);
-        console.log('Sending items:', items);
+        console.log('Sending items with profit:', items);
 
         processSaleMutation.mutate({ saleData, items });
     };
@@ -922,21 +918,26 @@ export default function Orders() {
 
     // Update your handleProcessReturn function with better calculations
     const handleProcessReturn = async () => {
-        // Build the return items list from both sources
         let allReturnItems = [...returnedItemsList];
-
-        // Add reduced quantity items to return list
         // Add reduced quantity items to return list
         for (const [productId, reducedInfo] of reducedItemsMap.entries()) {
             const cartItem = cart.find(item => item.id === productId);
             if (cartItem && reducedInfo.returnQuantity > 0) {
+                // Use profit_per_unit from the cart item
+                const profitPerUnit = cartItem.profit_per_unit ||
+                    (parseFloat(cartItem.price) - parseFloat(cartItem.cost_price || "0"));
+                const profitLoss = profitPerUnit * reducedInfo.returnQuantity;
+
+                console.log(`Returning ${reducedInfo.returnQuantity} of ${cartItem.name}, profit per unit: ${profitPerUnit}, total loss: ${profitLoss}`);
+
                 allReturnItems.push({
                     ...cartItem,
                     quantity: reducedInfo.returnQuantity,
                     total: reducedInfo.returnQuantity * parseFloat(cartItem.price),
+                    profit_loss: profitLoss,
                     returnReason: returnReason || "Product return",
                     returnDate: new Date().toISOString(),
-                    imageUrl: cartItem.imageUrl // Preserve image
+                    imageUrl: cartItem.imageUrl
                 });
             }
         }
@@ -950,16 +951,20 @@ export default function Orders() {
             return;
         }
 
-        // Calculate return fee using allReturnItems
+        const returnSubtotal = allReturnItems.reduce((sum, item) => sum + item.total, 0);
+
+        // Calculate total loss (profit that is being returned, NOT the selling price)
+        const totalLoss = allReturnItems.reduce((sum, item) => sum + (item.profit_loss || 0), 0);
+
+        // Calculate return fee
         let returnFee = 0;
         if (returnFeeType === "percentage") {
-            const returnSubtotal = allReturnItems.reduce((sum, item) => sum + item.total, 0);
             returnFee = (returnSubtotal * returnFeeValue) / 100;
         } else {
             returnFee = returnFeeValue;
         }
 
-        const returnTotal = allReturnItems.reduce((sum, item) => sum + item.total, 0) - returnFee;
+        const returnTotal = returnSubtotal - returnFee;
         const returnReceiptNumber = `RET-${Date.now()}`;
         const originalSaleId = isManualReturn ? `manual-${Date.now()}` : searchedSale?.id;
 
@@ -969,6 +974,7 @@ export default function Orders() {
             quantity: item.quantity,
             unitPrice: parseFloat(item.price),
             total: item.total.toString(),
+            profit_loss: item.profit_loss || 0,
         }));
 
         const returnData = {
@@ -976,11 +982,12 @@ export default function Orders() {
             originalSaleId: originalSaleId,
             customerName: customerName || searchedSale?.customerName || "Walk-in Customer",
             customerPhone: customerPhone || searchedSale?.customerPhone || "N/A",
-            subtotal: allReturnItems.reduce((sum, item) => sum + item.total, 0).toString(),
+            subtotal: returnSubtotal.toString(),
             tax: tax.toString(),
             discount: discount.toString(),
             returnFee: returnFee.toString(),
             total: returnTotal.toString(),
+            total_loss: totalLoss.toString(), // This is the profit being lost
             isManualReturn: isManualReturn,
             returnReason: returnReason || "Product return",
             paymentMethod: paymentMethod,
@@ -1071,6 +1078,11 @@ export default function Orders() {
                 const newTaxAmount = (newSubtotal * parseFloat(searchedSale.tax)) / 100;
                 const newDiscountAmount = (newSubtotal * parseFloat(searchedSale.discount)) / 100;
                 const newTotal = newSubtotal + newTaxAmount - newDiscountAmount;
+
+                // Calculate new profit (original profit minus the profit loss from returned items)
+                const originalProfit = parseFloat(searchedSale.total_profit) || 0;
+                const newProfit = originalProfit - totalLoss; // Subtract ONLY the profit, not the selling price
+
                 const previouslyReturned = parseFloat(searchedSale.total_returned_amount || 0);
                 const returnStatus = updatedSaleItems.length === 0 ? 'full' : 'partial';
 
@@ -1079,6 +1091,7 @@ export default function Orders() {
                     items: updatedSaleItems,
                     subtotal: newSubtotal,
                     total: newTotal,
+                    total_profit: newProfit, // Update the profit
                     return_status: returnStatus,
                     total_returned_amount: previouslyReturned + totalReturnedAmountThisTransaction,
                     returned_items: JSON.stringify(newReturnedItems)
@@ -1087,7 +1100,7 @@ export default function Orders() {
 
             toast({
                 title: "Return Processed",
-                description: `${allReturnItems.length} item(s) returned successfully`,
+                description: `${allReturnItems.length} item(s) returned successfully. Profit decreased by ${formatPKR(totalLoss)}`,
             });
 
             // Reset state

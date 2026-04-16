@@ -277,14 +277,23 @@ export default function Sales() {
       ),
     },
     {
-      key: 'payment_status' as const,
-      label: 'Status',
+      key: 'total_profit' as const,
+      label: 'Profit',
       render: (value: string) => (
-        <Badge className={getStatusColor(value)} variant="secondary">
-          {value?.toUpperCase() || '-'}
+        <Badge className={'bg-secondary/10 text-secondary'} variant="secondary">
+          {value}
         </Badge>
       ),
     },
+    // {
+    //   key: 'payment_status' as const,
+    //   label: 'Status',
+    //   render: (value: string) => (
+    //     <Badge className={getStatusColor(value)} variant="secondary">
+    //       {value?.toUpperCase() || '-'}
+    //     </Badge>
+    //   ),
+    // },
     {
       key: 'id' as const,
       label: 'Actions',

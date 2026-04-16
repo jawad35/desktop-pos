@@ -1070,7 +1070,7 @@ export function setupIpcHandlers() {
             const sale = db.prepare('SELECT * FROM sales WHERE receipt_number = ?').get(receiptNumber);
 
             if (!sale) {
-                return null;  // Return null directly, not { success: false }
+                return null;
             }
 
             // Parse returned_items if it exists
@@ -1080,9 +1080,14 @@ export function setupIpcHandlers() {
                 sale.returned_items = [];
             }
 
-            // Get sale items
+            // Get sale items with profit included
             const items = db.prepare(`
-            SELECT si.*, p.name as product_name, p.image_url, p.barcode
+            SELECT si.*, 
+                   p.name as product_name, 
+                   p.image_url, 
+                   p.barcode,
+                   p.stock,
+                   p.cost_price
             FROM sale_items si
             LEFT JOIN products p ON si.product_id = p.id
             WHERE si.sale_id = ?
@@ -1090,12 +1095,10 @@ export function setupIpcHandlers() {
 
             sale.items = items;
 
-            console.log("🔍 [IPC] Sale found - returned_items:", sale.returned_items);
-
-            return sale;  // Return the sale object directly
+            return sale;
         } catch (error) {
             console.error('Error in getSaleByReceiptNumber:', error);
-            throw error;  // Throw error so frontend catches it
+            throw error;
         }
     });
 
@@ -1113,22 +1116,58 @@ export function setupIpcHandlers() {
         const db = getDb();
         const id = crypto.randomUUID();
         const receiptNumber = saleData.receiptNumber || `INV-${Date.now()}`;
+
         try {
             db.exec('BEGIN TRANSACTION');
-            const saleStmt = db.prepare(`INSERT INTO sales (id, receipt_number, customer_name, customer_phone, subtotal, tax, discount, total, payment_method, account_number, payment_status, employee_id, user_id, shop_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-            saleStmt.run(id, receiptNumber, saleData.customerName, saleData.customerPhone, saleData.subtotal, saleData.tax || 0, saleData.discount || 0, saleData.total, saleData.paymentMethod || 'cash', saleData.accountNumber, saleData.paymentStatus || 'completed', saleData.employeeId, saleData.userId, saleData.shopId);
-            const itemStmt = db.prepare(`INSERT INTO sale_items (id, sale_id, product_id, quantity, unit_price, total) VALUES (?, ?, ?, ?, ?, ?)`);
+
+            // Ensure total_profit column exists
+            try {
+                db.exec(`ALTER TABLE sales ADD COLUMN total_profit DECIMAL(10,2) DEFAULT 0`);
+            } catch (error) { }
+
+            // Insert sale with profit
+            const saleStmt = db.prepare(`
+            INSERT INTO sales (
+                id, receipt_number, customer_name, customer_phone, subtotal, tax, discount, 
+                total, total_profit, payment_method, account_number, payment_status, 
+                employee_id, user_id, shop_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+            saleStmt.run(
+                id, receiptNumber, saleData.customerName, saleData.customerPhone,
+                saleData.subtotal, saleData.tax || 0, saleData.discount || 0,
+                saleData.total, saleData.total_profit || 0, saleData.paymentMethod || 'cash',
+                saleData.accountNumber, saleData.paymentStatus || 'completed',
+                saleData.employeeId, saleData.userId, saleData.shopId
+            );
+
+            // Insert sale items with profit
+            const itemStmt = db.prepare(`
+            INSERT INTO sale_items (id, sale_id, product_id, quantity, unit_price, total, profit) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+
             const updateStock = db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?');
+
             for (const item of items) {
                 const itemId = crypto.randomUUID();
-                itemStmt.run(itemId, id, item.productId, item.quantity, item.unitPrice, item.total);
+                const profitPerItem = parseFloat(item.profit) / item.quantity;
+
+                // Store each item's profit (total profit for this line item)
+                itemStmt.run(
+                    itemId, id, item.productId, item.quantity,
+                    item.unitPrice, item.total, item.profit || 0
+                );
                 updateStock.run(item.quantity, item.productId);
             }
+
             db.exec('COMMIT');
             const newSale = db.prepare('SELECT * FROM sales WHERE id = ?').get(id);
             return { success: true, data: newSale };
         } catch (error) {
             db.exec('ROLLBACK');
+            console.error('Error creating sale:', error);
             return { success: false, error: error.message };
         }
     });
@@ -1140,6 +1179,16 @@ export function setupIpcHandlers() {
 
         try {
             const db = getDb();
+
+            // Ensure total_profit column exists (migration)
+            try {
+                db.exec(`ALTER TABLE sales ADD COLUMN total_profit DECIMAL(10,2) DEFAULT 0`);
+                console.log('✅ Added total_profit column to sales table');
+            } catch (error) {
+                if (!error.message.includes('duplicate column name')) {
+                    console.error('Error adding total_profit column:', error);
+                }
+            }
 
             // Start transaction
             const transaction = db.transaction(() => {
@@ -1162,6 +1211,10 @@ export function setupIpcHandlers() {
                 if (saleData.total !== undefined) {
                     updates.push('total = ?');
                     params.push(saleData.total);
+                }
+                if (saleData.total_profit !== undefined) {  // Add this
+                    updates.push('total_profit = ?');
+                    params.push(saleData.total_profit);
                 }
                 if (saleData.return_status !== undefined) {
                     updates.push('return_status = ?');
@@ -1252,28 +1305,49 @@ export function setupIpcHandlers() {
         try {
             db.exec('BEGIN TRANSACTION');
 
-            // Insert return record
+            // Ensure total_loss column exists in returns table (migration)
+            // try {
+            //     db.exec(`ALTER TABLE returns ADD COLUMN total_loss DECIMAL(10,2) DEFAULT 0`);
+            //     console.log('✅ Added total_loss column to returns table');
+            // } catch (error) {
+            //     if (!error.message.includes('duplicate column name')) {
+            //         console.error('Error adding total_loss column:', error);
+            //     }
+            // }
+
+            // Ensure profit_loss column exists in return_items
+            // try {
+            //     db.exec(`ALTER TABLE return_items ADD COLUMN profit_loss DECIMAL(10,2) DEFAULT 0`);
+            //     console.log('✅ Added profit_loss column to return_items table');
+            // } catch (error) {
+            //     if (!error.message.includes('duplicate column name')) {
+            //         console.error('Error adding profit_loss column:', error);
+            //     }
+            // }
+
+            // Insert return record with total_loss
             const returnStmt = db.prepare(`
             INSERT INTO returns (
                 id, receipt_number, original_sale_id, customer_name, customer_phone,
-                subtotal, tax, discount, return_fee, total, return_reason,
+                subtotal, tax, discount, return_fee, total, total_loss, return_reason,
                 payment_method, payment_status, account_number, user_id, shop_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
             returnStmt.run(
                 id, receiptNumber, returnData.originalSaleId, returnData.customerName,
                 returnData.customerPhone, returnData.subtotal, returnData.tax || 0,
                 returnData.discount || 0, returnData.returnFee || 0, returnData.total,
+                returnData.total_loss || 0, // Add total loss (profit lost from return)
                 returnData.returnReason, returnData.paymentMethod || 'cash',
                 returnData.paymentStatus || 'completed', returnData.accountNumber,
                 returnData.userId, returnData.shopId
             );
 
-            // Insert return items and RESTORE stock
+            // Insert return items with profit_loss and RESTORE stock
             const itemStmt = db.prepare(`
-            INSERT INTO return_items (id, return_id, product_id, quantity, unit_price, total)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO return_items (id, return_id, product_id, quantity, unit_price, total, profit_loss)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         `);
 
             const updateStock = db.prepare(`
@@ -1282,7 +1356,15 @@ export function setupIpcHandlers() {
 
             for (const item of items) {
                 const itemId = crypto.randomUUID();
-                itemStmt.run(itemId, id, item.productId, item.quantity, item.unitPrice, item.total);
+                itemStmt.run(
+                    itemId,
+                    id,
+                    item.productId,
+                    item.quantity,
+                    item.unitPrice,
+                    item.total,
+                    item.profit_loss || 0 // Add profit/loss for this returned item
+                );
                 updateStock.run(item.quantity, item.productId); // Add stock back
             }
 
@@ -1737,50 +1819,50 @@ export function setupIpcHandlers() {
 
     // ========== SETTINGS ==========
     ipcMain.handle('db:getSettings', async () => {
-    try {
-        const db = getDb();
-
-        // Ensure visible_tabs column exists
         try {
-            db.exec(`ALTER TABLE settings ADD COLUMN visible_tabs TEXT DEFAULT '[]'`);
-            console.log('✅ Added visible_tabs column to settings table');
-        } catch (error) {
-            if (!error.message.includes('duplicate column name')) {
-                console.error('Error adding visible_tabs column:', error);
+            const db = getDb();
+
+            // Ensure visible_tabs column exists
+            try {
+                db.exec(`ALTER TABLE settings ADD COLUMN visible_tabs TEXT DEFAULT '[]'`);
+                console.log('✅ Added visible_tabs column to settings table');
+            } catch (error) {
+                if (!error.message.includes('duplicate column name')) {
+                    console.error('Error adding visible_tabs column:', error);
+                }
             }
-        }
 
-        const settings = db.prepare("SELECT * FROM settings WHERE id = 'default'").get();
+            const settings = db.prepare("SELECT * FROM settings WHERE id = 'default'").get();
 
-        if (!settings) {
-            const insertStmt = db.prepare(`
+            if (!settings) {
+                const insertStmt = db.prepare(`
                 INSERT INTO settings (id, tax, discount, visible_tabs) 
                 VALUES ('default', 0, 0, '[]')
             `);
-            insertStmt.run();
-            
-            const newSettings = db.prepare("SELECT * FROM settings WHERE id = 'default'").get();
-            newSettings.visible_tabs = [];
-            return { success: true, data: newSettings };
-        }
+                insertStmt.run();
 
-        // Parse visible_tabs from string to array
-        if (settings.visible_tabs && typeof settings.visible_tabs === 'string') {
-            try {
-                settings.visible_tabs = JSON.parse(settings.visible_tabs);
-            } catch (e) {
+                const newSettings = db.prepare("SELECT * FROM settings WHERE id = 'default'").get();
+                newSettings.visible_tabs = [];
+                return { success: true, data: newSettings };
+            }
+
+            // Parse visible_tabs from string to array
+            if (settings.visible_tabs && typeof settings.visible_tabs === 'string') {
+                try {
+                    settings.visible_tabs = JSON.parse(settings.visible_tabs);
+                } catch (e) {
+                    settings.visible_tabs = [];
+                }
+            } else if (!settings.visible_tabs) {
                 settings.visible_tabs = [];
             }
-        } else if (!settings.visible_tabs) {
-            settings.visible_tabs = [];
-        }
 
-        return { success: true, data: settings };
-    } catch (error) {
-        console.error('Error getting settings:', error);
-        return { success: false, error: error.message, data: { tax: 0, discount: 0, visible_tabs: [] } };
-    }
-});
+            return { success: true, data: settings };
+        } catch (error) {
+            console.error('Error getting settings:', error);
+            return { success: false, error: error.message, data: { tax: 0, discount: 0, visible_tabs: [] } };
+        }
+    });
 
     ipcMain.handle('db:updateSettings', async (event, settingsData) => {
         try {

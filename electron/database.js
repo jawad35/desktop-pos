@@ -199,17 +199,18 @@ function createAllTables(db) {
 
     // 9. Sale Items table
     db.exec(`
-        CREATE TABLE IF NOT EXISTS sale_items (
-            id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-            sale_id TEXT NOT NULL,
-            product_id TEXT NOT NULL,
-            quantity INTEGER NOT NULL,
-            unit_price DECIMAL(10,2) NOT NULL,
-            total DECIMAL(10,2) NOT NULL,
-            FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
-            FOREIGN KEY (product_id) REFERENCES products(id)
-        )
-    `);
+    CREATE TABLE IF NOT EXISTS sale_items (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        sale_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        unit_price DECIMAL(10,2) NOT NULL,
+        total DECIMAL(10,2) NOT NULL,
+        profit DECIMAL(10,2) DEFAULT 0,
+        FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id)
+    )
+`);
 
     // 10. Returns table
     db.exec(`
@@ -236,17 +237,18 @@ function createAllTables(db) {
 
     // 11. Return Items table
     db.exec(`
-        CREATE TABLE IF NOT EXISTS return_items (
-            id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-            return_id TEXT NOT NULL,
-            product_id TEXT NOT NULL,
-            quantity INTEGER NOT NULL,
-            unit_price DECIMAL(10,2) NOT NULL,
-            total DECIMAL(10,2) NOT NULL,
-            FOREIGN KEY (return_id) REFERENCES returns(id) ON DELETE CASCADE,
-            FOREIGN KEY (product_id) REFERENCES products(id)
-        )
-    `);
+    CREATE TABLE IF NOT EXISTS return_items (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        return_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        unit_price DECIMAL(10,2) NOT NULL,
+        total DECIMAL(10,2) NOT NULL,
+        profit_loss DECIMAL(10,2) DEFAULT 0,
+        FOREIGN KEY (return_id) REFERENCES returns(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id)
+    )
+`);
 
     // 12. Purchases table
     db.exec(`
@@ -438,5 +440,6 @@ function createAllTables(db) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_damaged_status ON damaged_stock(status)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_damaged_product ON damaged_stock(product_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_damaged_created ON damaged_stock(created_at)`);
+    
     console.log('✅ All 20 tables created successfully');
 }
