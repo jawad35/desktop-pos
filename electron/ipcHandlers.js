@@ -1,10 +1,16 @@
-import { ipcMain, shell, app } from 'electron';
+import { ipcMain, shell, app, BrowserWindow } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { getDb } from './database.js';
 import crypto from 'crypto';
 import licenseManager from './licenseManager.js';
 import axios from 'axios';
+import { google } from 'googleapis';
+import http from 'http';
+import url from 'url';
+import FormData from 'form-data';
+
+let oauthServer = null;
 
 export function setupIpcHandlers() {
 
@@ -2066,6 +2072,100 @@ export function setupIpcHandlers() {
         }
     });
 
+    ipcMain.handle('google:connect', async () => {
+        return new Promise((resolve, reject) => {
+            const CLIENT_ID = '1029274681556-ps3n13bvbjhogipcj7rsblfqu27041jq.apps.googleusercontent.com';
+            const CLIENT_SECRET = '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';
+            const REDIRECT_URI = 'http://localhost:3000';
+
+            const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+
+            const authUrl = oauth2Client.generateAuthUrl({
+                access_type: 'offline',
+                scope: ['https://www.googleapis.com/auth/drive.file'],
+                prompt: 'consent'
+            });
+
+            if (oauthServer) oauthServer.close();
+
+            oauthServer = http.createServer(async (req, res) => {
+                const query = url.parse(req.url, true).query;
+
+                if (query.code) {
+                    try {
+                        const { tokens } = await oauth2Client.getToken(query.code);
+                        console.log(tokens?.access_token, 'chal yar')
+                        const windows = BrowserWindow.getAllWindows();
+                        windows.forEach(win => {
+                            if (!win.isDestroyed()) {
+                                win.webContents.send('google-token', tokens.access_token);
+                            }
+                        });
+                        res.writeHead(200, { 'Content-Type': 'text/html' });
+                        res.end('<h1>✅ Connected Successfully!</h1><p>You can close this window.</p><script>window.close()</script>');
+                        oauthServer.close();
+                        resolve(tokens);
+                    } catch (error) {
+                        reject(error);
+                    }
+                }
+            });
+
+            oauthServer.listen(3000, () => {
+                console.log('OAuth server running on http://localhost:3000');
+                shell.openExternal(authUrl);
+            });
+        });
+    });
+
+    // In ipcHandlers.js - Test version that creates a text file
+   ipcMain.handle('backup:uploadToGoogleDrive', async (event, { accessToken, dbPath }) => {
+    try {
+        const oauth2Client = new google.auth.OAuth2();
+        oauth2Client.setCredentials({
+            access_token: accessToken
+        });
+        
+        const drive = google.drive({ version: 'v3', auth: oauth2Client });
+        
+        // Check if file exists
+        if (!fs.existsSync(dbPath)) {
+            throw new Error(`Database file not found: ${dbPath}`);
+        }
+        
+        const fileName = `pos_backup_${Date.now()}.db`;
+        const fileSize = fs.statSync(dbPath).size;
+        console.log(`Uploading ${fileName} (${fileSize} bytes) from ${dbPath}`);
+        
+        // Create a read stream with proper error handling
+        const fileStream = fs.createReadStream(dbPath);
+        
+        // Upload the file
+        const response = await drive.files.create({
+            requestBody: {
+                name: fileName,
+                mimeType: 'application/x-sqlite3'
+            },
+            media: {
+                mimeType: 'application/x-sqlite3',
+                body: fileStream
+            },
+            fields: 'id, name, size'
+        });
+        
+        console.log('Database upload successful:', response.data);
+        return { success: true, fileId: response.data.id, name: response.data.name };
+        
+    } catch (error) {
+        console.error('Upload error:', error.message);
+        return { success: false, error: error.message };
+    }
+});
+    ipcMain.handle('db:getPath', () => {
+        const userDataPath = app.getPath('userData');
+        const dbPath = path.join(userDataPath, 'pos.db');
+        return { success: true, path: dbPath };
+    });
 
     ipcMain.handle('app:restart', () => {
         app.relaunch();

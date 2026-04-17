@@ -5,7 +5,11 @@ type ElectronAPI = {
     login: (email: string, password: string) => Promise<any>;
     logout: () => Promise<void>;
     getCurrentUser: () => Promise<any>;
-    
+
+    connectGoogleDrive: () => Promise<any>;
+    onGoogleToken: (callback: (token: string) => void) => void;
+    uploadToGoogleDrive: (data: { accessToken: string; dbPath: string }) => Promise<any>;
+
 
     // Products
     getProducts: (filters?: any) => Promise<any>;
@@ -123,6 +127,10 @@ const electronAPI: ElectronAPI = {
     activateLicenseWithPin: (licenseKey, adminPin) => window.electronAPI.activateLicenseWithPin(licenseKey, adminPin),  // Add this line
     verifyLicenseOnline: () => window.electronAPI.verifyLicenseOnline(),
 
+    connectGoogleDrive: () => window.electronAPI.connectGoogleDrive(),
+    onGoogleToken: (callback) => window.electronAPI.onGoogleToken(callback),
+    uploadToGoogleDrive: (data) => window.electronAPI.uploadToGoogleDrive(data),
+
     // Add to electronAPI object
     verifyAdminPin: (pin) => window.electronAPI.verifyAdminPin(pin),
     updateAdminPin: (oldPin, newPin) => window.electronAPI.updateAdminPin(oldPin, newPin),
@@ -214,7 +222,7 @@ const electronAPI: ElectronAPI = {
     getDataLocation: () => window.electronAPI.getDataLocation(),
     backupData: () => window.electronAPI.backupData(),
     openDataFolder: () => window.electronAPI.openDataFolder(),
-    
+
 };
 
 // API implementation for Web (your existing backend)

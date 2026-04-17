@@ -50,7 +50,64 @@ export default function SettingsPage() {
     const [importing, setImporting] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [dbInfo, setDbInfo] = useState<{ size: string; path: string; lastBackup: string | null } | null>(null);
+    // Add this to your SettingsPage component
+    const [googleDriveToken, setGoogleDriveToken] = useState('');
+    const [isBackupEnabled, setIsBackupEnabled] = useState(false);
+    const [isConnecting, setIsConnecting] = useState(false);
 
+    // Add this function to handle Google Drive connection
+    // Add this useEffect to set up the token listener once when component mounts
+    // Update your token listener to save connection state
+    useEffect(() => {
+        // Listen for Google token from main process
+        if (window.electronAPI && window.electronAPI.onGoogleToken) {
+            window.electronAPI.onGoogleToken((token) => {
+                console.log('Received token in React:', token);
+                setGoogleDriveToken(token);
+                localStorage.setItem('google_drive_token', token);
+                localStorage.setItem('google_drive_connected', 'true');
+                setIsConnecting(false);
+                toast({ title: "Success", description: "Google Drive connected!" });
+            });
+        }
+
+        // Load saved token from localStorage
+        const savedToken = localStorage.getItem('google_drive_token');
+        const wasConnected = localStorage.getItem('google_drive_connected');
+
+        if (savedToken && wasConnected === 'true') {
+            setGoogleDriveToken(savedToken);
+            // Optionally re-enable auto backup if it was on
+            const savedAutoBackup = localStorage.getItem('auto_backup_enabled');
+            if (savedAutoBackup === 'true') {
+                setAutoBackupEnabled(true);
+            }
+        }
+    }, []);
+
+    // Update connectGoogleDrive function - remove the listener from here
+    const connectGoogleDrive = async () => {
+        setIsConnecting(true);
+        try {
+            // Start the OAuth server in the main process
+            await window.electronAPI.connectGoogleDrive();
+
+            // Set timeout for connection (5 minutes)
+            setTimeout(() => {
+                setIsConnecting(prev => {
+                    if (prev) {
+                        toast({ title: "Timeout", description: "Connection timed out", variant: "destructive" });
+                        return false;
+                    }
+                    return prev;
+                });
+            }, 300000);
+        } catch (error) {
+            console.error('Connection error:', error);
+            toast({ title: "Error", description: error.message, variant: "destructive" });
+            setIsConnecting(false);
+        }
+    };
     // Sidebar Settings States
     // Initialize with default values
     const [visibleTabs, setVisibleTabs] = useState<string[]>([
@@ -74,6 +131,67 @@ export default function SettingsPage() {
         fetchDbInfo();
         fetchSidebarSettings();
     }, []);
+
+
+    // Add this state
+    const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
+
+    // Add this useEffect to load saved setting on component mount
+    useEffect(() => {
+        // Load auto backup setting from localStorage
+        const savedAutoBackup = localStorage.getItem('auto_backup_enabled');
+        if (savedAutoBackup === 'true') {
+            setAutoBackupEnabled(true);
+        }
+    }, []);
+    // Add this function
+    const performAutoBackup = async () => {
+        if (!googleDriveToken || !dbInfo?.path) {
+            console.log('Auto backup skipped: Not connected');
+            return;
+        }
+
+        try {
+            console.log('🔄 Running auto backup at:', new Date().toLocaleTimeString());
+            const result = await window.electronAPI.uploadToGoogleDrive?.({
+                accessToken: googleDriveToken,
+                dbPath: dbInfo?.path
+            });
+
+            if (result?.success) {
+                console.log('✅ Auto backup successful:', result.name);
+                // Optional: Store last backup time
+                localStorage.setItem('last_auto_backup', new Date().toISOString());
+                toast({
+                    title: "Auto Backup",
+                    description: `Backed up at ${new Date().toLocaleTimeString()}`,
+                    duration: 2000
+                });
+            } else {
+                console.error('❌ Auto backup failed:', result?.error);
+            }
+        } catch (error) {
+            console.error('Auto backup error:', error);
+        }
+    };
+
+    // Add this useEffect for auto backup
+    useEffect(() => {
+        if (!autoBackupEnabled || !googleDriveToken || !dbInfo?.path) return;
+
+        console.log('Starting auto backup every 1 minute (TEST MODE)');
+
+        // Run immediately once when enabled
+        performAutoBackup();
+
+        // Set interval for 1 minute (60000 ms) for testing
+        const intervalId = setInterval(performAutoBackup, 60000); // 1 minute
+
+        return () => {
+            console.log('Stopping auto backup');
+            clearInterval(intervalId);
+        };
+    }, [autoBackupEnabled, googleDriveToken, dbInfo?.path]);
 
     const fetchSettings = async () => {
         try {
@@ -120,10 +238,12 @@ export default function SettingsPage() {
         try {
             const result = await api.getDataLocation();
             if (result.success) {
+                // Get the database file path (not the directory)
+                const dbFilePath = result.dbFile || path.join(result.location, 'pos.db');
                 const sizeResult = await window.electronAPI.getDatabaseInfo();
                 setDbInfo({
                     size: sizeResult?.size || "Unknown",
-                    path: result.location,
+                    path: dbFilePath,  // This should be the full file path, not directory
                     lastBackup: sizeResult?.lastBackup || null
                 });
             }
@@ -391,8 +511,8 @@ export default function SettingsPage() {
                                         <div
                                             key={tab.name}
                                             className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${visibleTabs?.includes(tab.name)
-                                                    ? 'border-primary bg-primary/5'
-                                                    : 'border-border hover:bg-muted/50'
+                                                ? 'border-primary bg-primary/5'
+                                                : 'border-border hover:bg-muted/50'
                                                 }`}
                                             onClick={() => handleToggleTab(tab.name)}
                                         >
@@ -405,8 +525,8 @@ export default function SettingsPage() {
                                                 <span className="text-sm font-medium">{tab.name}</span>
                                             </div>
                                             <div className={`w-4 h-4 rounded border ${visibleTabs?.includes(tab.name)
-                                                    ? 'bg-primary border-primary'
-                                                    : 'border-muted-foreground'
+                                                ? 'bg-primary border-primary'
+                                                : 'border-muted-foreground'
                                                 }`}>
                                                 {visibleTabs?.includes(tab.name) && (
                                                     <svg className="w-3 h-3 text-white m-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -631,6 +751,97 @@ export default function SettingsPage() {
                                     <p className="text-xs text-muted-foreground mt-2">
                                         Last backup: {new Date(dbInfo.lastBackup).toLocaleString()}
                                     </p>
+                                )}
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Google Drive Backup</CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                {!googleDriveToken ? (
+                                    <div className="space-y-4">
+                                        <p className="text-sm text-muted-foreground">
+                                            Connect your Google Drive to automatically backup your database every 24 hours.
+                                        </p>
+                                        <Button onClick={connectGoogleDrive} disabled={isConnecting}>
+                                            {isConnecting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                                            Connect Google Drive
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-4">
+                                        <div className="bg-green-50 dark:bg-green-950/20 p-4 rounded-lg">
+                                            <p className="text-green-600 dark:text-green-400">✅ Connected to Google Drive</p>
+                                            <p className="text-xs text-muted-foreground mt-1">
+                                                Your database will be backed up automatically every 24 hours
+                                            </p>
+                                        </div>
+
+                                        {/* Auto Backup Toggle - For testing */}
+                                        <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
+                                            <div>
+                                                <p className="text-sm font-medium">Auto Backup (Test Mode)</p>
+                                                <p className="text-xs text-muted-foreground">Every 1 minute for testing</p>
+                                                {autoBackupEnabled && (
+                                                    <p className="text-xs text-green-600 mt-1">
+                                                        Last backup: {localStorage.getItem('last_auto_backup') ?
+                                                            new Date(localStorage.getItem('last_auto_backup')).toLocaleTimeString() : 'Never'}
+                                                    </p>
+                                                )}
+                                            </div>
+                                            <button
+                                                onClick={() => {
+                                                    const newState = !autoBackupEnabled;
+                                                    setAutoBackupEnabled(newState);
+                                                    localStorage.setItem('auto_backup_enabled', newState.toString());
+                                                }}
+                                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${autoBackupEnabled ? 'bg-green-600' : 'bg-gray-300'
+                                                    }`}
+                                            >
+                                                <span
+                                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${autoBackupEnabled ? 'translate-x-6' : 'translate-x-1'
+                                                        }`}
+                                                />
+                                            </button>
+                                        </div>
+
+                                        <div className="flex gap-2">
+                                            <Button
+                                                variant="outline"
+                                                onClick={async () => {
+                                                    const result = await window.electronAPI.uploadToGoogleDrive?.({
+                                                        accessToken: googleDriveToken,
+                                                        dbPath: dbInfo?.path
+                                                    });
+                                                    if (result?.success) {
+                                                        toast({ title: "Success", description: "Backup uploaded to Google Drive!" });
+                                                    } else {
+                                                        toast({ title: "Error", description: "Upload failed", variant: "destructive" });
+                                                    }
+                                                }}
+                                            >
+                                                Backup Now
+                                            </Button>
+                                            <Button variant="outline" onClick={() => {
+                                                setGoogleDriveToken('');
+                                                setAutoBackupEnabled(false);
+                                                localStorage.removeItem('google_drive_token');
+                                                localStorage.removeItem('google_drive_connected');
+                                                localStorage.removeItem('auto_backup_enabled');
+                                                localStorage.removeItem('last_auto_backup');
+                                                toast({ title: "Disconnected", description: "Google Drive disconnected" });
+                                            }}>
+                                                Disconnect
+                                            </Button>
+                                        </div>
+
+                                        {autoBackupEnabled && (
+                                            <p className="text-xs text-green-600 text-center">
+                                                Auto backup running every 1 minute (TEST MODE)
+                                            </p>
+                                        )}
+                                    </div>
                                 )}
                             </CardContent>
                         </Card>

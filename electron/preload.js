@@ -409,6 +409,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return await ipcRenderer.invoke('license:activateWithPin', licenseKey, adminPin);
     },
 
+    connectGoogleDrive: () => ipcRenderer.invoke('google:connect'),
+    onGoogleToken: (callback) => {
+        ipcRenderer.on('google-token', (event, token) => callback(token));
+    },
+    uploadToGoogleDrive: async (data) => {
+        return await ipcRenderer.invoke('backup:uploadToGoogleDrive', data);
+    },
+    getDatabasePath: async () => {
+        return await ipcRenderer.invoke('db:getPath');
+    },
+    // Add these methods to preload.js
+    getBackupConfig: () => ipcRenderer.invoke('backup:getConfig'),
+    saveBackupConfig: (config) => ipcRenderer.invoke('backup:saveConfig', config),
+    uploadNow: () => ipcRenderer.invoke('backup:uploadNow'),
+
     restartApp: async () => {
         return await ipcRenderer.invoke('app:restart');
     },
