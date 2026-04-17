@@ -2074,8 +2074,8 @@ export function setupIpcHandlers() {
 
     ipcMain.handle('google:connect', async () => {
         return new Promise((resolve, reject) => {
-            const CLIENT_ID = '1029274681556-ps3n13bvbjhogipcj7rsblfqu27041jq.apps.googleusercontent.com';
-            const CLIENT_SECRET = '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';
+            const CLIENT_ID = '';
+            const CLIENT_SECRET = '';
             const REDIRECT_URI = 'http://localhost:3000';
 
             const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
