@@ -14,4 +14,6 @@ release/
 
 # OS files
 .DS_Store
-Thumbs.db
+Thumbs.db*.json
+test-*.js
+save-tokens.js
