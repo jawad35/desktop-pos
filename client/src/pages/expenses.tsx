@@ -3,9 +3,10 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { DataTable } from "@/components/ui/data-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -55,6 +56,15 @@ const PAYMENT_METHODS = [
 ];
 
 // Define the expense schema locally
+const EXPENSE_FREQUENCIES = [
+  { value: 'one-time', label: 'One Time', days: 1 },
+  { value: 'daily', label: 'Daily', days: 1 },
+  { value: 'weekly', label: 'Weekly', days: 7 },
+  { value: 'monthly', label: 'Monthly', days: 30 },
+  { value: 'yearly', label: 'Yearly', days: 365 },
+];
+
+// Add to your expense schema
 const insertExpenseSchema = z.object({
   title: z.string().min(1, "Title is required"),
   description: z.string().optional(),
@@ -62,6 +72,8 @@ const insertExpenseSchema = z.object({
   category: z.string().min(1, "Category is required"),
   payment_method: z.string().min(1, "Payment method is required"),
   receiptNumber: z.string().optional(),
+  frequency: z.string().default('one-time'), // Add this
+  is_recurring: z.boolean().default(false), // Add this
 });
 
 export default function Expenses() {
@@ -78,7 +90,7 @@ export default function Expenses() {
     limit: 50,
   });
   const { toast } = useToast();
-
+const [showRecurringWarning, setShowRecurringWarning] = useState(false);
   // Fetch expenses using Electron API
   const { data: expenses = [], isLoading, refetch } = useQuery<Expense[]>({
     queryKey: ["expenses", filters, pagination],
@@ -432,6 +444,18 @@ export default function Expenses() {
     }
   };
 
+  const calculateDailyCost = (amount: number, frequency: string): number => {
+    const frequencyMap: { [key: string]: number } = {
+      'one-time': 1,
+      'daily': 1,
+      'weekly': 7,
+      'monthly': 30,
+      'yearly': 365
+    };
+    const days = frequencyMap[frequency] || 1;
+    return amount / days;
+  };
+
   const columns = [
     {
       key: 'created_at' as const,
@@ -468,6 +492,31 @@ export default function Expenses() {
           {value}
         </Badge>
       ),
+    },
+    {
+      key: 'frequency' as const,
+      label: 'Frequency',
+      render: (value: string, row: Expense) => {
+        const freq = EXPENSE_FREQUENCIES?.find(f => f.value === value);
+        return (
+          <Badge variant="outline" className="capitalize">
+            {freq?.label || value || 'One Time'}
+            {row.is_recurring && <span className="ml-1 text-xs">🔄</span>}
+          </Badge>
+        );
+      },
+    },
+    {
+      key: 'daily_cost' as const,
+      label: 'Daily Cost',
+      render: (value: string, row: Expense) => {
+        const dailyCost = calculateDailyCost(row.amount, row.frequency || 'one-time');
+        return (
+          <span className="text-xs text-muted-foreground">
+            {formatPKR(dailyCost)}/day
+          </span>
+        );
+      },
     },
     {
       key: 'amount' as const,
@@ -702,6 +751,55 @@ export default function Expenses() {
                                       <span>{form.formState.errors.amount.message}</span>
                                     </div>
                                   )}
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="frequency"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Frequency</FormLabel>
+                                  <Select onValueChange={field.onChange} value={field.value}>
+                                    <FormControl>
+                                      <SelectTrigger data-testid="select-expense-frequency">
+                                        <SelectValue placeholder="Select frequency" />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      {EXPENSE_FREQUENCIES?.map((freq) => (
+                                        <SelectItem key={freq.value} value={freq.value}>
+                                          {freq.label} {freq.value !== 'one-time' && `(Rs.${(form.watch('amount') || 0) / freq?.days}/day)`}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <FormMessage />
+                                  {field.value !== 'one-time' && form.watch('amount') > 0 && (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Daily cost: {formatPKR(calculateDailyCost(form.watch('amount'), field.value))}
+                                    </p>
+                                  )}
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="is_recurring"
+                              render={({ field }) => (
+                                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
+                                  <div className="space-y-0.5">
+                                    <FormLabel>Recurring Expense</FormLabel>
+                                    <FormDescription>
+                                      Mark if this expense repeats at the selected frequency
+                                    </FormDescription>
+                                  </div>
+                                  <FormControl>
+                                    <Switch
+                                      checked={field.value}
+                                      onCheckedChange={field.onChange}
+                                    />
+                                  </FormControl>
                                 </FormItem>
                               )}
                             />
