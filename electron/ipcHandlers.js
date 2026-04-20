@@ -1500,11 +1500,20 @@ export function setupIpcHandlers() {
         try {
             const db = getDb();
             const id = crypto.randomUUID();
+            // Run this migration once
+            try {
+                db.exec(`ALTER TABLE expenses ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+                console.log('✅ Added updated_at column to expenses table');
+            } catch (error) {
+                if (!error.message.includes('duplicate column name')) {
+                    console.error('Error adding updated_at:', error);
+                }
+            }
             const stmt = db.prepare(`
             INSERT INTO expenses (
                 id, title, description, amount, category, account_number, 
-                payment_method, receipt_number, user_id, shop_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                payment_method, receipt_number, frequency, is_recurring, user_id, shop_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
             stmt.run(
@@ -1516,8 +1525,10 @@ export function setupIpcHandlers() {
                 expenseData.accountNumber || null,
                 expenseData.paymentMethod || 'cash',
                 expenseData.receiptNumber || null,
-                expenseData.user_id,    // Changed from userId to user_id
-                expenseData.shop_id     // Changed from shopId to shop_id
+                expenseData.frequency || 'one-time',      // Add frequency
+                expenseData.is_recurring ? 1 : 0,         // Add is_recurring
+                expenseData.user_id || 'system',
+                expenseData.shop_id || 'default'
             );
 
             const newExpense = db.prepare('SELECT * FROM expenses WHERE id = ?').get(id);
@@ -1534,16 +1545,29 @@ export function setupIpcHandlers() {
             const db = getDb();
             const updates = [];
             const params = [];
+
             if (expenseData.title !== undefined) { updates.push('title = ?'); params.push(expenseData.title); }
             if (expenseData.description !== undefined) { updates.push('description = ?'); params.push(expenseData.description); }
             if (expenseData.amount !== undefined) { updates.push('amount = ?'); params.push(expenseData.amount); }
             if (expenseData.category !== undefined) { updates.push('category = ?'); params.push(expenseData.category); }
             if (expenseData.payment_method !== undefined) { updates.push('payment_method = ?'); params.push(expenseData.payment_method); }
+            if (expenseData.receipt_number !== undefined) { updates.push('receipt_number = ?'); params.push(expenseData.receipt_number); }
+            if (expenseData.frequency !== undefined) { updates.push('frequency = ?'); params.push(expenseData.frequency); }
+            if (expenseData.is_recurring !== undefined) { updates.push('is_recurring = ?'); params.push(expenseData.is_recurring ? 1 : 0); }
+
             if (updates.length === 0) return { success: false, error: 'No fields to update' };
+
+            // REMOVE this line if column doesn't exist:
+            // updates.push('updated_at = CURRENT_TIMESTAMP');
+
             params.push(id);
-            const result = db.prepare(`UPDATE expenses SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+            const query = `UPDATE expenses SET ${updates.join(', ')} WHERE id = ?`;
+            const result = db.prepare(query).run(...params);
+
             return { success: result.changes > 0 };
         } catch (error) {
+            console.error('Error updating expense:', error);
             return { success: false, error: error.message };
         }
     });
@@ -1732,6 +1756,7 @@ export function setupIpcHandlers() {
             const db = getDb();
             const id = crypto.randomUUID();
             const existing = db.prepare(`SELECT id FROM attendance WHERE employee_id = ? AND date = ?`).get(attendanceData.employeeId, attendanceData.date);
+
             if (existing) {
                 const stmt = db.prepare(`UPDATE attendance SET status = ?, check_in = ?, check_out = ?, notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`);
                 stmt.run(attendanceData.status, attendanceData.checkIn, attendanceData.checkOut, attendanceData.notes, existing.id);
@@ -1742,6 +1767,7 @@ export function setupIpcHandlers() {
                 return { success: true, data: { id, ...attendanceData } };
             }
         } catch (error) {
+            console.error('Error in markAttendance:', error);
             return { success: false, error: error.message };
         }
     });
@@ -1786,7 +1812,35 @@ export function setupIpcHandlers() {
             return { success: false, error: error.message };
         }
     });
+    ipcMain.handle('db:updateSalary', async (event, id, salaryData) => {
+        try {
+            const db = getDb();
+            const updates = [];
+            const params = [];
 
+            if (salaryData.basicSalary !== undefined) { updates.push('basic_salary = ?'); params.push(salaryData.basicSalary); }
+            if (salaryData.bonuses !== undefined) { updates.push('bonuses = ?'); params.push(salaryData.bonuses); }
+            if (salaryData.deductions !== undefined) { updates.push('deductions = ?'); params.push(salaryData.deductions); }
+            if (salaryData.netSalary !== undefined) { updates.push('net_salary = ?'); params.push(salaryData.netSalary); }
+            if (salaryData.status !== undefined) { updates.push('status = ?'); params.push(salaryData.status); }
+            if (salaryData.payment_method !== undefined) { updates.push('payment_method = ?'); params.push(salaryData.payment_method); }
+            if (salaryData.notes !== undefined) { updates.push('notes = ?'); params.push(salaryData.notes); }
+
+            if (updates.length === 0) return { success: false, error: 'No fields to update' };
+
+            updates.push('updated_at = CURRENT_TIMESTAMP');
+            params.push(id);
+
+            const query = `UPDATE salaries SET ${updates.join(', ')} WHERE id = ?`;
+            const result = db.prepare(query).run(...params);
+
+            const updatedSalary = db.prepare('SELECT * FROM salaries WHERE id = ?').get(id);
+            return { success: result.changes > 0, data: updatedSalary };
+        } catch (error) {
+            console.error('Error updating salary:', error);
+            return { success: false, error: error.message };
+        }
+    });
     // ========== DASHBOARD STATS ==========
     ipcMain.handle('db:getDashboardStats', async (event, userId, shopId) => {
         try {
@@ -1969,6 +2023,195 @@ export function setupIpcHandlers() {
         }
     });
 
+    // Add this handler in ipcHandlers.js
+    ipcMain.handle('db:getProfitData', async (event, startDate, endDate) => {
+    try {
+        const db = getDb();
+        
+        // Calculate number of days in the period
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        const daysDiff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        
+        // Helper function to get days in a specific month
+        const getDaysInMonth = (year, month) => {
+            return new Date(year, month + 1, 0).getDate();
+        };
+        
+        // Get sales with profit (these are already correct - count full amount when sold)
+        const sales = db.prepare(`
+            SELECT 
+                si.id,
+                p.name as product_name,
+                si.quantity,
+                si.unit_price,
+                si.total,
+                si.profit,
+                s.created_at as sale_date
+            FROM sale_items si
+            JOIN products p ON si.product_id = p.id
+            JOIN sales s ON si.sale_id = s.id
+            WHERE date(s.created_at) BETWEEN date(?) AND date(?)
+            ORDER BY s.created_at DESC
+        `).all(startDate, endDate);
+        
+        // Calculate sales totals
+        let totalSales = 0;
+        let totalCOGS = 0;
+        let grossProfit = 0;
+        
+        for (const sale of sales) {
+            totalSales += sale.total;
+            const profit = sale.profit || 0;
+            grossProfit += profit;
+            totalCOGS += sale.total - profit;
+        }
+        
+        // Get SALARIES - SPREAD ACROSS DAYS (don't count full amount on payment day)
+        // First get all paid salaries that fall within the period or before
+        const salaries = db.prepare(`
+            SELECT 
+                sa.id,
+                e.name as employee_name,
+                sa.basic_salary,
+                sa.bonuses,
+                sa.deductions,
+                sa.net_salary,
+                sa.created_at,
+                sa.payment_date,
+                sa.status,
+                sa.month,
+                sa.year
+            FROM salaries sa
+            JOIN employees e ON sa.employee_id = e.id
+            WHERE sa.status = 'paid'
+        `).all();
+        
+        let totalSalaries = 0;
+        
+        // For each salary, calculate daily rate and add only the days within the period
+        for (const salary of salaries) {
+            const salaryDate = salary.payment_date || salary.created_at;
+            if (!salaryDate) continue;
+            
+            const salaryYear = new Date(salaryDate).getFullYear();
+            const salaryMonth = new Date(salaryDate).getMonth();
+            const daysInMonth = getDaysInMonth(salaryYear, salaryMonth);
+            const dailyRate = salary.net_salary / daysInMonth;
+            
+            // Calculate how many days of this salary fall within the selected period
+            const salaryStart = new Date(salaryYear, salaryMonth, 1);
+            const salaryEnd = new Date(salaryYear, salaryMonth, daysInMonth);
+            
+            const periodStart = new Date(startDate);
+            const periodEnd = new Date(endDate);
+            
+            const overlapStart = new Date(Math.max(salaryStart.getTime(), periodStart.getTime()));
+            const overlapEnd = new Date(Math.min(salaryEnd.getTime(), periodEnd.getTime()));
+            
+            if (overlapStart <= overlapEnd) {
+                const daysInPeriod = Math.ceil((overlapEnd.getTime() - overlapStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                totalSalaries += dailyRate * daysInPeriod;
+            }
+        }
+        
+        // Get EXPENSES - handle recurring expenses properly
+        const expenses = db.prepare(`
+            SELECT * FROM expenses 
+            WHERE date(created_at) BETWEEN date(?) AND date(?)
+            OR is_recurring = 1
+            ORDER BY created_at DESC
+        `).all(startDate, endDate);
+        
+        let totalExpenses = 0;
+        
+        // Get all recurring expenses (including those not in the date range)
+        const allRecurringExpenses = db.prepare(`
+            SELECT * FROM expenses 
+            WHERE is_recurring = 1
+        `).all();
+        
+        // Add recurring expenses that apply to this period
+        for (const expense of allRecurringExpenses) {
+            let dailyAmount = 0;
+            const expenseAmount = expense.amount || 0;
+            
+            switch (expense.frequency) {
+                case 'daily':
+                    dailyAmount = expenseAmount;
+                    break;
+                case 'weekly':
+                    dailyAmount = expenseAmount / 7;
+                    break;
+                case 'monthly':
+                    dailyAmount = expenseAmount / 30;
+                    break;
+                case 'yearly':
+                    dailyAmount = expenseAmount / 365;
+                    break;
+                default:
+                    dailyAmount = 0;
+            }
+            
+            totalExpenses += dailyAmount * daysDiff;
+        }
+        
+        // Add one-time expenses that fall within the date range
+        for (const expense of expenses) {
+            if (!expense.is_recurring || expense.frequency === 'one-time') {
+                totalExpenses += expense.amount || 0;
+            }
+        }
+        
+        const netProfit = grossProfit - totalSalaries - totalExpenses;
+        
+        // Format salaries for display (show full amount but note it's spread)
+        const formattedSalaries = salaries.map(s => ({
+            id: s.id,
+            employee_name: s.employee_name,
+            net_salary: s.net_salary,
+            payment_date: s.payment_date || s.created_at,
+            status: s.status,
+            note: `Daily rate: ${(s.net_salary / getDaysInMonth(new Date(s.payment_date || s.created_at).getFullYear(), new Date(s.payment_date || s.created_at).getMonth())).toFixed(2)}/day`
+        }));
+        
+        // Format expenses for display
+        const formattedExpenses = expenses.map(e => ({
+            id: e.id,
+            title: e.title,
+            category: e.category,
+            amount: e.amount,
+            frequency: e.frequency,
+            is_recurring: e.is_recurring,
+            created_at: e.created_at,
+            daily_cost: e.is_recurring ? (
+                e.frequency === 'daily' ? e.amount :
+                e.frequency === 'weekly' ? e.amount / 7 :
+                e.frequency === 'monthly' ? e.amount / 30 :
+                e.frequency === 'yearly' ? e.amount / 365 : 0
+            ) : 0
+        }));
+        
+        return {
+            period: { startDate, endDate, days: daysDiff },
+            summary: {
+                totalSales,
+                totalCOGS,
+                grossProfit,
+                totalSalaries,
+                totalExpenses,
+                netProfit
+            },
+            sales,
+            salaries: formattedSalaries,
+            expenses: formattedExpenses
+        };
+    } catch (error) {
+        console.error('Error in getProfitData:', error);
+        throw error;
+    }
+});
+
     // Update admin PIN - sync with server and local
     ipcMain.handle('app:updateAdminPin', async (event, oldPin, newPin) => {
         try {
@@ -2119,53 +2362,54 @@ export function setupIpcHandlers() {
     });
 
     // In ipcHandlers.js - Test version that creates a text file
-   ipcMain.handle('backup:uploadToGoogleDrive', async (event, { accessToken, dbPath }) => {
-    try {
-        const oauth2Client = new google.auth.OAuth2();
-        oauth2Client.setCredentials({
-            access_token: accessToken
-        });
-        
-        const drive = google.drive({ version: 'v3', auth: oauth2Client });
-        
-        // Check if file exists
-        if (!fs.existsSync(dbPath)) {
-            throw new Error(`Database file not found: ${dbPath}`);
+    ipcMain.handle('backup:uploadToGoogleDrive', async (event, { accessToken, dbPath }) => {
+        try {
+            const oauth2Client = new google.auth.OAuth2();
+            oauth2Client.setCredentials({
+                access_token: accessToken
+            });
+
+            const drive = google.drive({ version: 'v3', auth: oauth2Client });
+
+            // Check if file exists
+            if (!fs.existsSync(dbPath)) {
+                throw new Error(`Database file not found: ${dbPath}`);
+            }
+
+            const fileName = `pos_backup_${Date.now()}.db`;
+            const fileSize = fs.statSync(dbPath).size;
+            console.log(`Uploading ${fileName} (${fileSize} bytes) from ${dbPath}`);
+
+            // Create a read stream with proper error handling
+            const fileStream = fs.createReadStream(dbPath);
+
+            // Upload the file
+            const response = await drive.files.create({
+                requestBody: {
+                    name: fileName,
+                    mimeType: 'application/x-sqlite3'
+                },
+                media: {
+                    mimeType: 'application/x-sqlite3',
+                    body: fileStream
+                },
+                fields: 'id, name, size'
+            });
+
+            console.log('Database upload successful:', response.data);
+            return { success: true, fileId: response.data.id, name: response.data.name };
+
+        } catch (error) {
+            console.error('Upload error:', error.message);
+            return { success: false, error: error.message };
         }
-        
-        const fileName = `pos_backup_${Date.now()}.db`;
-        const fileSize = fs.statSync(dbPath).size;
-        console.log(`Uploading ${fileName} (${fileSize} bytes) from ${dbPath}`);
-        
-        // Create a read stream with proper error handling
-        const fileStream = fs.createReadStream(dbPath);
-        
-        // Upload the file
-        const response = await drive.files.create({
-            requestBody: {
-                name: fileName,
-                mimeType: 'application/x-sqlite3'
-            },
-            media: {
-                mimeType: 'application/x-sqlite3',
-                body: fileStream
-            },
-            fields: 'id, name, size'
-        });
-        
-        console.log('Database upload successful:', response.data);
-        return { success: true, fileId: response.data.id, name: response.data.name };
-        
-    } catch (error) {
-        console.error('Upload error:', error.message);
-        return { success: false, error: error.message };
-    }
-});
+    });
     ipcMain.handle('db:getPath', () => {
         const userDataPath = app.getPath('userData');
         const dbPath = path.join(userDataPath, 'pos.db');
         return { success: true, path: dbPath };
     });
+
 
     ipcMain.handle('app:restart', () => {
         app.relaunch();

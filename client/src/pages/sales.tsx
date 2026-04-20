@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { formatPKR } from "@/lib/currency";
 import { format } from "date-fns";
-import { Eye, Download, ChevronRight, ChevronLeft } from "lucide-react";
+import { Eye, Download, ChevronRight, ChevronLeft, RotateCcw } from "lucide-react";
 import { useHeader } from "@/contexts/HeaderContext";
 import { useLocation } from "wouter";
 import { getPaymentMethodColor } from "@/utils/GetPaymentMethodColor";
@@ -191,27 +191,44 @@ export default function Sales() {
     }
   };
 
+  // Add this function with your other handlers in Sales component
+  const handleReturnFromSale = (receiptNumber: string) => {
+    console.log(`Processing return for sale receipt: ${receiptNumber}`);
+
+    // Store the receipt number in sessionStorage to pass to POS page
+    sessionStorage.setItem('returnReceiptNumber', receiptNumber);
+    sessionStorage.setItem('returnMode', 'true');
+
+    // Navigate to orders page (adjust the path if needed - could be '/pos/orders' or '/orders')
+    navigate('/pos');
+
+    toast({
+      title: "Return Mode Activated",
+      description: `Preparing return for receipt: ${receiptNumber}`,
+    });
+  };
+
   const columns = [
-       {
-        key: 'receipt_number' as const,
-        label: 'Receipt No.',
-        render: (value: string) => (
-            <span 
-                className="font-medium text-primary font-mono cursor-pointer hover:underline"
-                onClick={(e) => {
-                    e.stopPropagation();
-                    navigator.clipboard.writeText(value);
-                    toast({ 
-                        title: "Copied!", 
-                        description: `Receipt ${value} copied to clipboard`,
-                        duration: 1500
-                    });
-                }}
-                title="Click to copy receipt number"
-            >
-                {value}
-            </span>
-        ),
+    {
+      key: 'receipt_number' as const,
+      label: 'Receipt No.',
+      render: (value: string) => (
+        <span
+          className="font-medium text-primary font-mono cursor-pointer hover:underline"
+          onClick={(e) => {
+            e.stopPropagation();
+            navigator.clipboard.writeText(value);
+            toast({
+              title: "Copied!",
+              description: `Receipt ${value} copied to clipboard`,
+              duration: 1500
+            });
+          }}
+          title="Click to copy receipt number"
+        >
+          {value}
+        </span>
+      ),
     },
     {
       key: 'created_at' as const,
@@ -223,18 +240,6 @@ export default function Sales() {
         </div>
       ),
     },
-    // {
-    //   key: 'customer_name' as const,
-    //   label: 'Customer',
-    //   render: (value: string, row: any) => (
-    //     <div>
-    //       <p className="text-sm">{value || 'Walk-in Customer'}</p>
-    //       {row.customer_phone && (
-    //         <p className="text-xs text-muted-foreground">{row.customer_phone}</p>
-    //       )}
-    //     </div>
-    //   ),
-    // },
     {
       key: 'total' as const,
       label: 'Amount',
@@ -285,27 +290,28 @@ export default function Sales() {
         </Badge>
       ),
     },
-    // {
-    //   key: 'payment_status' as const,
-    //   label: 'Status',
-    //   render: (value: string) => (
-    //     <Badge className={getStatusColor(value)} variant="secondary">
-    //       {value?.toUpperCase() || '-'}
-    //     </Badge>
-    //   ),
-    // },
     {
-      key: 'id' as const,
+      key: 'actions' as const,  // Changed from 'id' to 'actions' for clarity
       label: 'Actions',
-      render: (value: string, row: any) => (
-        <div className="flex space-x-2">
+      // Make sure row contains the full sale object with receipt_number
+      render: (_: any, row: any) => (  // Use row parameter to access full sale data
+        <div className="flex gap-1">
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => handleViewDetails(value)}
-            data-testid={`button-view-${value}`}
+            onClick={() => handleViewDetails(row.id)}  // Use row.id
           >
             <Eye className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => handleReturnFromSale(row.receipt_number)}  // Use row.receipt_number
+            className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+            title="Return this sale"
+            disabled={row.return_status === 'full'}  // Disable if fully returned
+          >
+            <RotateCcw className="h-4 w-4" />
           </Button>
         </div>
       ),

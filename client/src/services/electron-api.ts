@@ -77,7 +77,8 @@ type ElectronAPI = {
     getSalaries: (employeeId: string, month?: string, year?: string) => Promise<any>;
     createSalary: (data: any) => Promise<any>;
     updateSalaryStatus: (id: string, status: string) => Promise<any>;
-
+    // Add this to ElectronAPI interface
+    getProfitData: (startDate: string, endDate: string) => Promise<any>;
     // Returns
     getReturns: () => Promise<any>;
     createReturn: (returnData: any, items: any) => Promise<any>;
@@ -203,6 +204,9 @@ const electronAPI: ElectronAPI = {
     getSalaries: (employeeId, month, year) => window.electronAPI.getSalaries(employeeId, month, year),
     createSalary: (data) => window.electronAPI.createSalary(data),
     updateSalaryStatus: (id, status) => window.electronAPI.updateSalaryStatus(id, status),
+    updateSalary: (id: string, salaryData: any) => window.electronAPI.updateSalary(id, salaryData),
+    // In electronAPI object, add:
+    getProfitData: (startDate, endDate) => window.electronAPI.getProfitData(startDate, endDate),
 
     // Returns
     getReturns: () => window.electronAPI.getReturns(),
@@ -282,6 +286,8 @@ const webAPI: ElectronAPI = {
     getTransactionLogs: () => fetch('/api/transaction-logs').then(r => r.json()),
     getDataLocation: () => Promise.resolve({ success: true, location: 'Web version' }),
     backupData: () => Promise.resolve({ success: true, message: 'Backup not available in web version' }),
+    // In webAPI object, add:
+    getProfitData: (startDate, endDate) => fetch(`/api/profit-dashboard?startDate=${startDate}&endDate=${endDate}`).then(r => r.json()),
     openDataFolder: () => Promise.resolve(),
 };
 

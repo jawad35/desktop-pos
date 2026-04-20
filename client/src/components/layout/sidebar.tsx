@@ -22,6 +22,8 @@ import {
   AlertTriangle,
   Database,
   Key,
+  Banknote,
+  Undo2
 } from "lucide-react";
 import { useHeader } from "@/contexts/HeaderContext";
 import { useAuth } from "@/hooks/useAuth";
@@ -38,12 +40,13 @@ const ALL_NAVIGATION = [
   { name: "POS Terminal", href: "/pos", icon: CreditCard, title: "POS Terminal", subtitle: "Process customer sales", adminOnly: false },
   { name: "Products", href: "/products", icon: Box, title: "Products", subtitle: "Manage your product catalog", adminOnly: true },
   { name: "Sales", href: "/sales", icon: Receipt, title: "Sales", subtitle: "View and manage all sales transactions", adminOnly: false },
-  { name: "Returns", href: "/returns", icon: Receipt, title: "Returns", subtitle: "View and manage all returns transactions", adminOnly: false },
+  { name: "Returns", href: "/returns", icon: Undo2, title: "Returns", subtitle: "View and manage all returns transactions", adminOnly: false },
   { name: "Purchases", href: "/purchases", icon: ShoppingCart, title: "Purchases", subtitle: "Record purchase orders", adminOnly: true },
   { name: "Suppliers", href: "/suppliers", icon: Truck, title: "Suppliers", subtitle: "Manage supplier information", adminOnly: true },
   { name: "Categories", href: "/categories", icon: Tags, title: "Categories", subtitle: "Organize your products", adminOnly: true },
   { name: "Expenses", href: "/expenses", icon: Calculator, title: "Expenses", subtitle: "Track business expenses", adminOnly: true },
   { name: "Employees", href: "/employees", icon: Users2, title: "Employees", subtitle: "Manage employees", adminOnly: true },
+  { name: "Net Profit", href: "/net-profit", icon: Banknote, title: "Net Profit", subtitle: "Track Net Profit", adminOnly: true },
   // { name: "Damaged Stock", href: "/damaged", icon: AlertTriangle, title: "Damaged Stock", subtitle: "Manage damaged products", adminOnly: true },
   { name: "Profile", href: "/profile", icon: UserCircle, title: "Profile", subtitle: "See Shop Details", adminOnly: false },
   { name: "Settings", href: "/settings", icon: Settings, title: "Settings", subtitle: "Manage settings", adminOnly: true },

@@ -13,6 +13,8 @@ import DamagedStock from "@/pages/damaged-stock";
 import Sales from "@/pages/sales";
 import Purchases from "@/pages/purchases";
 import Suppliers from "@/pages/suppliers";
+import NetProfit from "@/pages/net-profit";
+
 import Categories from "@/pages/categories";
 import TransactionLogs from "@/pages/transaction-logs";
 import ReceiptManagement from "@/pages/receipt-management";
@@ -84,6 +86,7 @@ function Router() {
           <Route path="/item-details/:id/:mode" component={ItemDetails} />
           <Route path="/purchases" component={Purchases} />
           <Route path="/suppliers" component={Suppliers} />
+          <Route path="/net-profit" component={NetProfit} />
           <Route path="/categories" component={Categories} />
           <Route path="/transaction-logs" component={TransactionLogs} />
           <Route path="/receipt-management" component={ReceiptManagement} />

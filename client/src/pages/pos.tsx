@@ -69,7 +69,7 @@ export default function Orders() {
     const [isReturnMode, setIsReturnMode] = useState(false);
     const [isOrderMode, setIsOrderMode] = useState(false);
     const [employeeId, setEmployeeId] = useState("");
-    const [returnReceiptNumber, setReturnReceiptNumber] = useState("RCP-1775566266505");
+    const [returnReceiptNumber, setReturnReceiptNumber] = useState("");
     const [returnReason, setReturnReason] = useState("");
     const [returnFeeType, setReturnFeeType] = useState<"percentage" | "fixed">("percentage");
     const [returnFeeValue, setReturnFeeValue] = useState(0);
@@ -146,6 +146,35 @@ export default function Orders() {
 
     const { settings, isLoading: settingsLoading } = useSettings();
 
+    // Add this useEffect in your Orders component (add it with your other useEffects)
+    useEffect(() => {
+        // Check if we're coming from returns history
+        const returnReceiptFromStorage = sessionStorage.getItem('returnReceiptNumber');
+        const returnModeFromStorage = sessionStorage.getItem('returnMode');
+
+        if (returnModeFromStorage === 'true' && returnReceiptFromStorage) {
+            console.log('Auto-loading return for receipt:', returnReceiptFromStorage);
+
+            // Enable return mode
+            setIsReturnMode(true);
+
+            // Set the receipt number
+            setReturnReceiptNumber(returnReceiptFromStorage);
+
+            // Auto-search for the sale
+            searchSaleMutation.mutate(returnReceiptFromStorage);
+
+            // Clear the session storage
+            sessionStorage.removeItem('returnReceiptNumber');
+            sessionStorage.removeItem('returnMode');
+
+            toast({
+                title: "Return Mode Enabled",
+                description: `Loaded receipt ${returnReceiptFromStorage} for return`,
+            });
+        }
+    }, []); // Empty dependency array - runs once on mount
+
     // Add this useEffect to load settings when available
     useEffect(() => {
         if (settings) {
@@ -165,6 +194,30 @@ export default function Orders() {
         setDamageNotes("");
         setShowDamageDialog(true);
     };
+
+    // Load cart from localStorage when component mounts
+    useEffect(() => {
+        const savedCart = localStorage.getItem('pos_cart');
+        if (savedCart) {
+            try {
+                const parsedCart = JSON.parse(savedCart);
+                setCart(parsedCart);
+                console.log('Cart loaded from storage:', parsedCart.length, 'items');
+            } catch (error) {
+                console.error('Failed to load saved cart:', error);
+            }
+        }
+    }, []); // Empty array = runs once when component mounts
+
+    // Save cart to localStorage whenever it changes
+    useEffect(() => {
+        if (cart.length > 0) {
+            localStorage.setItem('pos_cart', JSON.stringify(cart));
+            console.log('Cart saved to storage:', cart.length, 'items');
+        } else {
+            localStorage.removeItem('pos_cart');
+        }
+    }, [cart]); // Runs every time cart changes
 
     const handleReturnItem = (item: CartItem) => {
         console.log("🔍 [RETURN] Moving item to return list:", {
@@ -728,6 +781,7 @@ export default function Orders() {
         console.log('Sending items with profit:', items);
 
         processSaleMutation.mutate({ saleData, items });
+        localStorage.removeItem('pos_cart');
     };
 
     // Scanner functions
@@ -1792,7 +1846,10 @@ export default function Orders() {
                                     <Button
                                         variant="outline"
                                         size="sm"
-                                        onClick={() => setCart([])}
+                                        onClick={() => {
+                                            setCart([])
+                                            localStorage.removeItem('pos_cart');
+                                        }}
                                         disabled={cart.length === 0}
                                         data-testid="button-clear-cart"
                                     >

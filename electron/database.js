@@ -288,20 +288,23 @@ function createAllTables(db) {
 
     // 14. Expenses table
     db.exec(`
-        CREATE TABLE IF NOT EXISTS expenses (
-            id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-            title TEXT NOT NULL,
-            description TEXT,
-            amount DECIMAL(10,2) NOT NULL,
-            category TEXT NOT NULL,
-            account_number TEXT,
-            payment_method TEXT DEFAULT 'cash',
-            receipt_number TEXT,
-            user_id TEXT NOT NULL,
-            shop_id TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    `);
+    CREATE TABLE IF NOT EXISTS expenses (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        title TEXT NOT NULL,
+        description TEXT,
+        amount DECIMAL(10,2) NOT NULL,
+        category TEXT NOT NULL,
+        account_number TEXT,
+        payment_method TEXT DEFAULT 'cash',
+        receipt_number TEXT,
+        frequency TEXT DEFAULT 'one-time',
+        is_recurring INTEGER DEFAULT 0,
+        user_id TEXT NOT NULL,
+        shop_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+`);
 
     // 15. Transaction Logs table
     db.exec(`
@@ -440,6 +443,6 @@ function createAllTables(db) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_damaged_status ON damaged_stock(status)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_damaged_product ON damaged_stock(product_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_damaged_created ON damaged_stock(created_at)`);
-    
+
     console.log('✅ All 20 tables created successfully');
 }

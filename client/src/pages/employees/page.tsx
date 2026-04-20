@@ -79,14 +79,43 @@ export default function Employees() {
         },
     });
 
-    const handleDelete = (employeeId: string) => {
-        setEmployeeToDelete(employeeId);
+    // Replace the delete mutation with this:
+    const toggleEmployeeStatusMutation = useMutation({
+        mutationFn: async ({ employeeId, isActive }: { employeeId: string; isActive: boolean }) => {
+            // Update the employee's is_active status
+            const result = await api.updateEmployee(employeeId, { is_active: isActive ? 1 : 0 });
+            console.log('Toggle status result:', result);
+            return result;
+        },
+        onSuccess: (_, variables) => {
+            const newStatus = variables.isActive ? 'activated' : 'deactivated';
+            toast({
+                title: "Success",
+                description: `Employee ${newStatus} successfully`
+            });
+            setIsDeleteDialogOpen(false);
+            setEmployeeToDelete(null);
+            refetch(); // Refresh the list
+        },
+        onError: (error: Error) => {
+            toast({ title: "Error", description: error.message, variant: "destructive" });
+        },
+    });
+
+    // Replace handleDelete with this:
+    const handleToggleStatus = (employee: any) => {
+        setEmployeeToDelete(employee);
         setIsDeleteDialogOpen(true);
     };
 
-    const confirmDelete = () => {
+    // Replace confirmDelete with this:
+    const confirmToggleStatus = () => {
         if (employeeToDelete) {
-            deleteEmployeeMutation.mutate(employeeToDelete);
+            const newStatus = employeeToDelete.is_active === 1 ? false : true;
+            toggleEmployeeStatusMutation.mutate({
+                employeeId: employeeToDelete.id,
+                isActive: newStatus
+            });
         }
     };
 
@@ -193,8 +222,13 @@ export default function Employees() {
                     <Button size="sm" variant="ghost" onClick={() => handleShareWhatsApp(row)}>
                         <Share className="h-4 w-4" />
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => handleDelete(value)}>
-                        <Trash2 className="h-4 w-4" />
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleToggleStatus(row)}
+                        className={row.is_active === 1 ? "text-red-500 hover:text-red-700" : "text-green-500 hover:text-green-700"}
+                    >
+                        {row.is_active === 1 ? 'Deactivate' : 'Activate'}
                     </Button>
                 </div>
             ),
@@ -216,57 +250,65 @@ export default function Employees() {
         <div className="flex-1 flex flex-col overflow-hidden">
             <main className="flex-1 overflow-auto p-6">
                 {/* Summary Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
-                    <Card>
-                        <CardContent className="p-6">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-muted-foreground">Total Employees</p>
-                                    <p className="text-2xl font-bold">{employees.length}</p>
-                                </div>
-                                <Users className="h-6 w-6 text-primary" />
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    <Card>
-                        <CardContent className="p-6">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-muted-foreground">Active Employees</p>
-                                    <p className="text-2xl font-bold text-green-600">{activeEmployees.length}</p>
-                                </div>
-                                <Badge className="bg-green-100 text-green-800">Active</Badge>
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    <Card>
-                        <CardContent className="p-6">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-muted-foreground">Monthly Salary</p>
-                                    <p className="text-2xl font-bold text-secondary">{formatPKR(totalMonthlySalary)}</p>
-                                </div>
-                                <Banknote className="h-6 w-6 text-secondary" />
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    <Card>
-                        <CardContent className="p-6">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-muted-foreground">Managers</p>
-                                    <p className="text-2xl font-bold text-blue-600">
-                                        {employees.filter((emp: any) => emp.employee_type === 'manager').length}
-                                    </p>
-                                </div>
-                                <Users className="h-6 w-6 text-blue-600" />
-                            </div>
-                        </CardContent>
-                    </Card>
+               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-6">
+    {/* Total Employees Card */}
+    <Card>
+        <CardContent className="p-4 sm:p-6">
+            <div className="flex items-center justify-between">
+                <div>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Total Employees</p>
+                    <p className="text-xl sm:text-2xl font-bold">{employees.length}</p>
                 </div>
+                <Users className="h-5 w-5 sm:h-6 sm:w-6 text-primary" />
+            </div>
+        </CardContent>
+    </Card>
+
+    {/* Active Employees Card */}
+    <Card>
+        <CardContent className="p-4 sm:p-6">
+            <div className="flex items-center justify-between">
+                <div>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Active Employees</p>
+                    <p className="text-xl sm:text-2xl font-bold text-green-600">{activeEmployees.length}</p>
+                </div>
+                <Badge className="bg-green-100 text-green-800 text-xs sm:text-sm px-2 py-1">
+                    Active
+                </Badge>
+            </div>
+        </CardContent>
+    </Card>
+
+    {/* Monthly Salary Card */}
+    <Card>
+        <CardContent className="p-4 sm:p-6">
+            <div className="flex items-center justify-between">
+                <div>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Monthly Salary</p>
+                    <p className="text-lg sm:text-2xl font-bold text-secondary break-words">
+                        {formatPKR(totalMonthlySalary)}
+                    </p>
+                </div>
+                <Banknote className="h-5 w-5 sm:h-6 sm:w-6 text-secondary flex-shrink-0" />
+            </div>
+        </CardContent>
+    </Card>
+
+    {/* Managers Card */}
+    <Card>
+        <CardContent className="p-4 sm:p-6">
+            <div className="flex items-center justify-between">
+                <div>
+                    <p className="text-xs sm:text-sm text-muted-foreground">Managers</p>
+                    <p className="text-xl sm:text-2xl font-bold text-blue-600">
+                        {employees.filter((emp: any) => emp.employee_type === 'manager').length}
+                    </p>
+                </div>
+                <Users className="h-5 w-5 sm:h-6 sm:w-6 text-blue-600" />
+            </div>
+        </CardContent>
+    </Card>
+</div>
 
                 <Card>
                     <CardHeader>
@@ -357,18 +399,32 @@ export default function Employees() {
                 />
 
                 {/* Delete Confirmation Dialog */}
+                {/* Status Change Confirmation Dialog */}
                 <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
                     <DialogContent>
                         <DialogHeader>
-                            <DialogTitle>Delete Employee</DialogTitle>
+                            <DialogTitle>
+                                {employeeToDelete?.is_active === 1 ? 'Deactivate Employee' : 'Activate Employee'}
+                            </DialogTitle>
                         </DialogHeader>
-                        <p>Are you sure you want to delete this employee? This action cannot be undone.</p>
+                        <p>
+                            Are you sure you want to {employeeToDelete?.is_active === 1 ? 'deactivate' : 'activate'}
+                            <strong className="font-semibold"> {employeeToDelete?.name}</strong>?
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                            {employeeToDelete?.is_active === 1
+                                ? 'Deactivated employees will not appear in active lists but their data will be preserved.'
+                                : 'Activated employees will be able to work and receive salaries.'}
+                        </p>
                         <DialogFooter>
                             <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>
                                 Cancel
                             </Button>
-                            <Button variant="destructive" onClick={confirmDelete}>
-                                Delete
+                            <Button
+                                variant={employeeToDelete?.is_active === 1 ? "destructive" : "default"}
+                                onClick={confirmToggleStatus}
+                            >
+                                {employeeToDelete?.is_active === 1 ? 'Deactivate' : 'Activate'}
                             </Button>
                         </DialogFooter>
                     </DialogContent>

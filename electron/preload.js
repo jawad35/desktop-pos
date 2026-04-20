@@ -282,10 +282,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
         const result = await ipcRenderer.invoke('db:getAttendance', employeeId, month, year);
         return result.success ? result.data : [];
     },
+
     markAttendance: async (attendanceData) => {
+        console.log(attendanceData, 'haan naa')
         const result = await ipcRenderer.invoke('db:markAttendance', attendanceData);
-        console.log(result, 'jey899')
-        return result.success ? result.data : null;
+        return result;
+    },
+
+    // In preload.js, add:
+    getProfitData: async (startDate, endDate) => {
+        return await ipcRenderer.invoke('db:getProfitData', startDate, endDate);
     },
 
     // ========== SALARIES ==========
@@ -301,7 +307,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
         const result = await ipcRenderer.invoke('db:updateSalaryStatus', id, status);
         return result.success;
     },
-
+    updateSalary: async (id, salaryData) => {
+        return await ipcRenderer.invoke('db:updateSalary', id, salaryData);
+    },
     // ========== DASHBOARD ==========
     getDashboardStats: async (userId, shopId) => {
         const result = await ipcRenderer.invoke('db:getDashboardStats', userId, shopId);
