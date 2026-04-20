@@ -8,12 +8,53 @@ release/
 
 # environment
 .env
+.env.*
+*.env
 
 # logs
 *.log
 
 # OS files
 .DS_Store
-Thumbs.db*.json
+Thumbs.db
+
+# ⚠️ CRITICAL - Ignore all sensitive files (add these lines)
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.node.json
+
+# Ignore test files with secrets
 test-*.js
+test-*.html
+*.test.js
+*.spec.js
+
+# Ignore service account keys
+*-*.json
+!package.json
+pos-system-*.json
+service-account-*.json
+*-credentials.json
+
+# Ignore token files
 save-tokens.js
+*tokens.js
+*secret*.js
+*credential*.js
+*.key
+*.pem
+*.p12
+
+# Ignore OAuth related files
+oauth-*.js
+google-*.js
+drive-*.js
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
