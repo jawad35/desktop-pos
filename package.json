@@ -10,7 +10,7 @@
     "server": "node server/index.js",
     "build": "vite build",
     "rebuild": "electron-rebuild",
-    "electron:dev": "npm run build && electron .",
+    "electron:dev": "npm run build && npx electron .",
     "electron:build": "npm run build && electron-builder",
     "electron:build:mac": "npm run build && electron-builder --mac",
     "electron:build:win": "npm run build && electron-builder --win --x64",
