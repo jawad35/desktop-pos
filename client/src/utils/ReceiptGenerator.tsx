@@ -2,6 +2,7 @@ import { formatPKR } from "@/lib/currency";
 
 export interface ReceiptData {
   shopName: string;
+  salesman: string;
   shopAddress: string;
   receiptNumber: string;
   date: string;
@@ -79,6 +80,9 @@ export const HanldePrintReceipt = ({ generateReceiptData }: PrintReceiptProps) =
           </div>
           <div class="receipt-info">
             <span>Time: ${receiptData.time}</span>
+          </div>
+          <div class="receipt-info">
+            <span>Saleman: ${receiptData?.salesman ? receiptData?.salesman : "System"}</span>
           </div>
           
           <div class="divider"></div>

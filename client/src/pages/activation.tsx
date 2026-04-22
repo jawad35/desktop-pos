@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, CheckCircle, AlertCircle, Shield, Key, Lock } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, Shield, Key, Lock, AlertTriangle } from 'lucide-react';
 
 interface ActivationProps {
     onActivated: () => void;
@@ -14,7 +14,71 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
     const [adminPin, setAdminPin] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
+    const [subscriptionStatus, setSubscriptionStatus] = useState<{
+        status: string;
+        message: string;
+        shopName?: string;
+        expiryDate?: string;
+    } | null>(null);
+    const [isChecking, setIsChecking] = useState(false);
     const { toast } = useToast();
+
+    // Check subscription status on component mount
+    useEffect(() => {
+        checkSubscriptionStatus();
+    }, []);
+
+    const checkSubscriptionStatus = async () => {
+        setIsChecking(true);
+        try {
+            const result = await window.electronAPI.checkSubscriptionStatus();
+            console.log('Subscription status:', result);
+            
+            if (result && result.status) {
+                setSubscriptionStatus({
+                    status: result.status,
+                    message: result.message || getStatusMessage(result.status),
+                    shopName: result.shopName,
+                    expiryDate: result.expiryDate
+                });
+                
+                // If subscription is active and we have a license, proceed
+                if (result.status === 'active' && result.hasLicense) {
+                    toast({
+                        title: "Subscription Active",
+                        description: "Your subscription is active. You can proceed.",
+                    });
+                    // Auto-proceed after 2 seconds
+                    setTimeout(() => {
+                        onActivated();
+                    }, 2000);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to check subscription:', error);
+            setSubscriptionStatus({
+                status: 'error',
+                message: 'Unable to verify subscription status. Please check your internet connection.'
+            });
+        } finally {
+            setIsChecking(false);
+        }
+    };
+
+    const getStatusMessage = (status: string): string => {
+        switch (status) {
+            case 'active':
+                return 'Your subscription is active and valid.';
+            case 'expired':
+                return 'Your subscription has expired. Please renew to continue using the software.';
+            case 'suspended':
+                return 'Your subscription has been suspended. Please contact support.';
+            case 'pending':
+                return 'Your subscription is pending activation. Please wait or contact support.';
+            default:
+                return 'Unable to verify subscription status.';
+        }
+    };
 
     const handleActivate = async () => {
         if (!licenseKey.trim()) {
@@ -39,22 +103,30 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
             const result = await window.electronAPI.activateLicenseWithPin(licenseKey, adminPin);
 
             if (result.success) {
-                // Save the admin PIN locally
-                const defaultPinExists = await window.electronAPI.verifyAdminPin('1234');
-                if (defaultPinExists.success) {
-                    await window.electronAPI.updateAdminPin('1234', adminPin);
-                } else {
-                    await window.electronAPI.updateAdminPin(adminPin, adminPin);
-                }
+                // After activation, check subscription status again
+                const subStatus = await window.electronAPI.checkSubscriptionStatus();
                 
-                console.log('Admin PIN saved successfully');
+                if (subStatus.status === 'active') {
+                    // Save the admin PIN locally
+                    const defaultPinExists = await window.electronAPI.verifyAdminPin('1234');
+                    if (defaultPinExists.success) {
+                        await window.electronAPI.updateAdminPin('1234', adminPin);
+                    } else {
+                        await window.electronAPI.updateAdminPin(adminPin, adminPin);
+                    }
+                    
+                    console.log('Admin PIN saved successfully');
 
-                toast({
-                    title: "Activation Successful! 🎉",
-                    description: `Your license is valid until ${new Date(result.expiry_date).toLocaleDateString()}`,
-                });
+                    toast({
+                        title: "Activation Successful! 🎉",
+                        description: `Your license is valid until ${new Date(result.expiry_date).toLocaleDateString()}`,
+                    });
 
-                window.location.reload();
+                    onActivated();
+                } else {
+                    setError(`License activated but subscription is ${subStatus.status}. ${subStatus.message}`);
+                    setSubscriptionStatus(subStatus);
+                }
             } else {
                 setError(result.message || 'Activation failed');
                 toast({
@@ -89,6 +161,69 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
                     </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                    {/* Subscription Status Display */}
+                    {isChecking && (
+                        <div className="flex items-center justify-center gap-2 p-3 bg-blue-50 rounded-lg">
+                            <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                            <span className="text-sm text-blue-600">Checking subscription status...</span>
+                        </div>
+                    )}
+
+                    {subscriptionStatus && !isChecking && subscriptionStatus.status !== 'active' && (
+                        <div className={`p-4 rounded-lg ${
+                            subscriptionStatus.status === 'expired' ? 'bg-red-50 border border-red-200' :
+                            subscriptionStatus.status === 'suspended' ? 'bg-orange-50 border border-orange-200' :
+                            'bg-yellow-50 border border-yellow-200'
+                        }`}>
+                            <div className="flex items-start gap-3">
+                                <AlertTriangle className={`h-5 w-5 flex-shrink-0 ${
+                                    subscriptionStatus.status === 'expired' ? 'text-red-600' :
+                                    subscriptionStatus.status === 'suspended' ? 'text-orange-600' :
+                                    'text-yellow-600'
+                                }`} />
+                                <div>
+                                    <p className={`font-semibold ${
+                                        subscriptionStatus.status === 'expired' ? 'text-red-800' :
+                                        subscriptionStatus.status === 'suspended' ? 'text-orange-800' :
+                                        'text-yellow-800'
+                                    }`}>
+                                        Subscription {subscriptionStatus.status.toUpperCase()}
+                                    </p>
+                                    <p className={`text-sm mt-1 ${
+                                        subscriptionStatus.status === 'expired' ? 'text-red-700' :
+                                        subscriptionStatus.status === 'suspended' ? 'text-orange-700' :
+                                        'text-yellow-700'
+                                    }`}>
+                                        {subscriptionStatus.message}
+                                    </p>
+                                    {subscriptionStatus.expiryDate && (
+                                        <p className="text-xs text-muted-foreground mt-2">
+                                            Expired on: {new Date(subscriptionStatus.expiryDate).toLocaleDateString()}
+                                        </p>
+                                    )}
+                                    <Button 
+                                        variant="link" 
+                                        className="p-0 h-auto mt-2 text-sm"
+                                        onClick={() => window.open('mailto:support@yourdomain.com')}
+                                    >
+                                        Contact Support →
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {subscriptionStatus?.status === 'active' && subscriptionStatus.hasLicense && (
+                        <div className="p-3 bg-green-50 rounded-lg border border-green-200">
+                            <div className="flex items-center gap-2">
+                                <CheckCircle className="h-4 w-4 text-green-600" />
+                                <span className="text-sm text-green-700">
+                                    Subscription active{subscriptionStatus.shopName ? ` for ${subscriptionStatus.shopName}` : ''}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+
                     {/* License Key Input */}
                     <div>
                         <label className="block text-sm font-medium mb-2">
@@ -105,7 +240,7 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
                                     setError('');
                                 }}
                                 className="pl-10 text-center font-mono text-lg tracking-wider"
-                                disabled={isLoading}
+                                disabled={isLoading || subscriptionStatus?.status === 'active'}
                             />
                         </div>
                     </div>
@@ -127,7 +262,7 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
                                 }}
                                 className="pl-10 text-center font-mono text-lg tracking-wider"
                                 maxLength={6}
-                                disabled={isLoading}
+                                disabled={isLoading || subscriptionStatus?.status === 'active'}
                             />
                         </div>
                         <p className="text-xs text-muted-foreground mt-1">
@@ -144,7 +279,7 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
 
                     <Button
                         onClick={handleActivate}
-                        disabled={isLoading || !licenseKey.trim() || !adminPin.trim()}
+                        disabled={isLoading || !licenseKey.trim() || !adminPin.trim() || subscriptionStatus?.status === 'active'}
                         className="w-full"
                         size="lg"
                     >

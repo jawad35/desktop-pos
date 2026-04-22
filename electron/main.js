@@ -86,7 +86,7 @@ function initializeDatabase() {
 // Add this function after your imports, before app.whenReady()
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5002/api'; // Your server URL
+const API_URL = 'https://admin-pod.onrender.com/api'; // Your server URL
 
 async function verifyShopSubscription() {
     try {
@@ -153,19 +153,6 @@ async function verifyShopSubscription() {
         writeLog(`Error verifying subscription: ${error.message}`, 'ERROR');
         return { isValid: false, reason: 'error', message: error.message };
     }
-}
-
-// Create a function to show subscription error and then activation
-function showSubscriptionErrorAndActivate(message) {
-    // Show error dialog first
-    dialog.showErrorBox('Subscription Issue', message);
-
-    // Clear the license after showing message
-    licenseManager.clearLicense();
-    writeLog('License cleared after showing error message');
-
-    // Then show activation window
-    createActivationWindow();
 }
 
 // Create main application window

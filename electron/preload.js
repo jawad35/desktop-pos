@@ -416,7 +416,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     activateLicenseWithPin: async (licenseKey, adminPin) => {
         return await ipcRenderer.invoke('license:activateWithPin', licenseKey, adminPin);
     },
-
+    getGoogleDriveStorage: async () => {
+        return await ipcRenderer.invoke('google:getStorageInfo');
+    },
     connectGoogleDrive: () => ipcRenderer.invoke('google:connect'),
     onGoogleToken: (callback) => {
         ipcRenderer.on('google-token', (event, token) => callback(token));
@@ -424,6 +426,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     uploadToGoogleDrive: async (data) => {
         return await ipcRenderer.invoke('backup:uploadToGoogleDrive', data);
     },
+    // Add this to your preload.js
+    checkSubscriptionStatus: () => ipcRenderer.invoke('app:checkSubscriptionStatus'),
     getDatabasePath: async () => {
         return await ipcRenderer.invoke('db:getPath');
     },

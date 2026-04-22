@@ -124,6 +124,18 @@ export default function Orders() {
 
     const { toast } = useToast();
 
+    // Add this function at the top of your component (before return statement)
+    const safeFormatDate = (dateValue: any) => {
+        if (!dateValue) return 'N/A';
+        try {
+            const date = new Date(dateValue);
+            if (isNaN(date.getTime())) return 'N/A';
+            return date.toLocaleDateString();
+        } catch (error) {
+            return 'N/A';
+        }
+    };
+
     // Add this state for damage tracking
     const [damagedItems, setDamagedItems] = useState<{ [key: string]: { isDamaged: boolean; quantity: number; reason: string } }>({});
 
@@ -155,6 +167,9 @@ export default function Orders() {
         if (returnModeFromStorage === 'true' && returnReceiptFromStorage) {
             console.log('Auto-loading return for receipt:', returnReceiptFromStorage);
 
+            // Disable order mode if active
+            setIsOrderMode(false);
+
             // Enable return mode
             setIsReturnMode(true);
 
@@ -173,7 +188,31 @@ export default function Orders() {
                 description: `Loaded receipt ${returnReceiptFromStorage} for return`,
             });
         }
-    }, []); // Empty dependency array - runs once on mount
+    }, []);
+
+    const handleReturnModeToggle = () => {
+        if (isOrderMode) {
+            toast({
+                title: "Cannot Enable Return Mode",
+                description: "Please exit Order Mode first",
+                variant: "destructive",
+            });
+            return;
+        }
+        setIsReturnMode(!isReturnMode);
+        setHasModifiedQuantities(false);
+    };
+    const handleOrderModeToggle = () => {
+        if (isReturnMode) {
+            toast({
+                title: "Cannot Enable Order Mode",
+                description: "Please exit Return Mode first",
+                variant: "destructive",
+            });
+            return;
+        }
+        setIsOrderMode(!isOrderMode);
+    };
 
     // Add this useEffect to load settings when available
     useEffect(() => {
@@ -889,6 +928,8 @@ export default function Orders() {
         paymentMethod: string;
         amountPaid: number;
         change: number;
+        salesman?: string;
+        paymentStatus?: string;
     }
 
     const handlePrintReceipt = () => {
@@ -910,6 +951,10 @@ export default function Orders() {
         const taxAmountValue = (subtotal * currentTaxValue) / 100;
         const discountAmountValue = (subtotal * currentDiscountValue) / 100;
         const totalValue = subtotal + taxAmountValue - discountAmountValue;
+        // Find salesman name
+        const selectedSalesman = salesman.find(emp => emp.id === employeeId);
+        console.log(selectedSalesman, salesman, employeeId)
+        const salesmanName = selectedSalesman?.name || '';
 
         return {
             shopName: shop.name || '',
@@ -927,8 +972,11 @@ export default function Orders() {
             paymentMethod: paymentMethod,
             amountPaid: amountPaid,
             change: Math.max(0, amountPaid - totalValue),
+            salesman: salesmanName,  // Add this
+            paymentStatus: paymentStatus,  // Add this
         };
     };
+
 
 
     const handleShareWhatsApp = () => {
@@ -1436,23 +1484,20 @@ export default function Orders() {
                                 </CardTitle>
                             </CardHeader>
                             <CardContent>
-                                <div className="flex space-x-2 mb-4">
+                                <div className="flex flex-col sm:flex-row gap-2 mb-4">
                                     <Button
                                         variant={isOrderMode ? "destructive" : "outline"}
-                                        onClick={() => setIsOrderMode(!isOrderMode)}
+                                        onClick={handleOrderModeToggle}
                                         className="flex-1"
+                                        disabled={isReturnMode}
                                     >
                                         {isOrderMode ? "Exit Order Mode" : "Order Mode"}
                                     </Button>
-                                </div>
-                                <div className="flex space-x-2 mb-4">
                                     <Button
                                         variant={isReturnMode ? "destructive" : "outline"}
-                                        onClick={() => {
-                                            setIsReturnMode(!isReturnMode)
-                                            setHasModifiedQuantities(false);
-                                        }}
+                                        onClick={handleReturnModeToggle}
                                         className="flex-1"
+                                        disabled={isOrderMode}
                                     >
                                         {isReturnMode ? "Exit Return Mode" : "Return Mode"}
                                     </Button>
@@ -1476,10 +1521,13 @@ export default function Orders() {
                                         </div>
 
                                         {searchedSale && (
-                                            <div className="text-sm p-2 bg-background rounded">
-                                                <p><strong>Receipt:</strong> {searchedSale.receiptNumber}</p>
-                                                <p><strong>Date:</strong> {new Date(searchedSale.createdAt).toLocaleDateString()}</p>
-                                                <p><strong>Original Total:</strong> {formatPKR(parseFloat(searchedSale.total))}</p>
+                                            <div className="text-sm p-2 bg-background rounded space-y-1">
+                                                <p><strong>Receipt:</strong> {searchedSale.receipt_number || searchedSale.receiptNumber || 'N/A'}</p>
+                                                <p><strong>Date:</strong> {safeFormatDate(searchedSale.created_at || searchedSale.createdAt)}</p>
+                                                <p><strong>Original Total:</strong> {formatPKR(parseFloat(searchedSale.total || 0))}</p>
+                                                {searchedSale.customer_name && (
+                                                    <p><strong>Customer:</strong> {searchedSale.customer_name}</p>
+                                                )}
                                             </div>
                                         )}
 
@@ -1528,7 +1576,7 @@ export default function Orders() {
 
                                 {/* Cart Items */}
                                 {/* Cart Items */}
-                                <div className="space-y-3 mb-4 max-h-60 overflow-y-auto">
+                                <div className="space-y-3 mb-4 max-h-[300px] md:max-h-[400px] overflow-y-auto">
                                     {cart.length === 0 ? (
                                         <div className="text-center py-8">
                                             <ShoppingCart className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
@@ -1542,11 +1590,11 @@ export default function Orders() {
                                             return (
                                                 <div
                                                     key={item.id}
-                                                    className="flex items-center justify-between p-3 bg-muted/30 rounded-lg"
+                                                    className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 bg-muted/30 rounded-lg gap-3"
                                                     data-testid={`cart-item-${item.id}`}
                                                 >
                                                     {/* Product image */}
-                                                    <div className="w-12 h-12 rounded-md overflow-hidden flex-shrink-0 mr-3 bg-muted">
+                                                    <div className="w-12 h-12 rounded-md overflow-hidden flex-shrink-0 bg-muted">
                                                         {item.imageUrl ? (
                                                             <img
                                                                 src={item.imageUrl}
@@ -1560,8 +1608,8 @@ export default function Orders() {
                                                         )}
                                                     </div>
 
-                                                    {/* Product info */}
-                                                    <div className="flex-1 min-w-0">
+                                                    {/* Product info - responsive */}
+                                                    <div className="flex-1 min-w-0 w-full sm:w-auto">
                                                         <p className="font-medium text-sm truncate">{item.name}</p>
                                                         <p className="text-xs text-muted-foreground">
                                                             {formatPKR(item.price)} x {item.quantity}
@@ -1571,51 +1619,51 @@ export default function Orders() {
                                                         </p>
                                                     </div>
 
-                                                    {/* Quantity controls */}
-                                                    <div className="flex items-center space-x-2 ml-2">
-                                                        <Button
-                                                            size="sm"
-                                                            variant="outline"
-                                                            onClick={() => updateQuantity(item.id, -1)}
-                                                            className="h-6 w-6 p-0"
-                                                            disabled={isMinQuantity}
-                                                            data-testid={`button-decrease-${item.id}`}
-                                                        >
-                                                            <Minus className="h-3 w-3" />
-                                                        </Button>
-                                                        <span className="text-sm font-medium w-8 text-center">
-                                                            {item.quantity}
-                                                        </span>
-                                                        <Button
-                                                            size="sm"
-                                                            variant="outline"
-                                                            onClick={() => updateQuantity(item.id, 1)}
-                                                            className="h-6 w-6 p-0"
-                                                            disabled={isMaxQuantity}
-                                                            data-testid={`button-increase-${item.id}`}
-                                                        >
-                                                            <Plus className="h-3 w-3" />
-                                                        </Button>
+                                                    {/* Quantity controls - responsive */}
+                                                    <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-3">
+                                                        <div className="flex items-center space-x-2">
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                onClick={() => updateQuantity(item.id, -1)}
+                                                                className="h-7 w-7 p-0"
+                                                                disabled={isMinQuantity}
+                                                            >
+                                                                <Minus className="h-3 w-3" />
+                                                            </Button>
+                                                            <span className="text-sm font-medium w-8 text-center">
+                                                                {item.quantity}
+                                                            </span>
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                onClick={() => updateQuantity(item.id, 1)}
+                                                                className="h-7 w-7 p-0"
+                                                                disabled={isMaxQuantity}
+                                                            >
+                                                                <Plus className="h-3 w-3" />
+                                                            </Button>
+                                                        </div>
+
+                                                        {/* Total price */}
+                                                        <p className="font-semibold text-sm min-w-[80px] text-right">
+                                                            {formatPKR(item.total)}
+                                                        </p>
+
+                                                        {/* Return button */}
+                                                        {isReturnMode && searchedSale?.return_status !== 'full' && (
+                                                            <Button
+                                                                size="sm"
+                                                                variant="ghost"
+                                                                onClick={() => handleReturnItem(item)}
+                                                                className="text-destructive hover:text-destructive"
+                                                                title="Return this item"
+                                                                disabled={searchedSale?.return_status === 'full'}
+                                                            >
+                                                                <RefreshCw className="h-4 w-4" />
+                                                            </Button>
+                                                        )}
                                                     </div>
-
-                                                    {/* Total price */}
-                                                    <p className="font-semibold text-sm ml-3 data-table">
-                                                        {formatPKR(item.total)}
-                                                    </p>
-
-                                                    {/* Return/Delete button - only show in return mode */}
-                                                    {isReturnMode && searchedSale?.return_status !== 'full' && (
-                                                        <Button
-                                                            size="sm"
-                                                            variant="ghost"
-                                                            onClick={() => handleReturnItem(item)}
-                                                            className="ml-2 text-destructive hover:text-destructive"
-                                                            title="Return this item"
-                                                            disabled={searchedSale?.return_status === 'full'}
-                                                        >
-                                                            <RefreshCw className="h-4 w-4" />
-                                                        </Button>
-                                                    )}
                                                 </div>
                                             );
                                         })
@@ -1625,14 +1673,14 @@ export default function Orders() {
                                 {/* Cart Summary */}
                                 {/* Cart Summary */}
                                 <div className="border-t border-border pt-4 space-y-2">
-                                    <div className="flex justify-between text-sm">
+                                    <div className="flex justify-between text-sm flex-wrap gap-2">
                                         <span className="text-muted-foreground">Subtotal:</span>
-                                        <span className="data-table">{formatPKR(subtotal)}</span>
+                                        <span className="data-table font-medium">{formatPKR(subtotal)}</span>
                                     </div>
 
-                                    {/* Tax Section with Checkbox and Editable Input */}
-                                    <div className="flex justify-between text-sm items-center">
-                                        <div className="flex items-center gap-2">
+                                    {/* Tax Section */}
+                                    <div className="flex justify-between text-sm items-center flex-wrap gap-2">
+                                        <div className="flex items-center gap-2 flex-wrap">
                                             <input
                                                 type="checkbox"
                                                 checked={taxEnabled}
@@ -1659,7 +1707,7 @@ export default function Orders() {
                                                     <span className="text-xs">%</span>
                                                     <button
                                                         onClick={() => setUseCustomTax(!useCustomTax)}
-                                                        className="text-xs text-primary hover:underline ml-1"
+                                                        className="text-xs text-primary hover:underline"
                                                     >
                                                         {useCustomTax ? "Reset" : "Custom"}
                                                     </button>
@@ -1669,9 +1717,9 @@ export default function Orders() {
                                         <span className="data-table">{formatPKR(taxAmount)}</span>
                                     </div>
 
-                                    {/* Discount Section with Checkbox and Editable Input */}
-                                    <div className="flex justify-between text-sm items-center">
-                                        <div className="flex items-center gap-2">
+                                    {/* Discount Section */}
+                                    <div className="flex justify-between text-sm items-center flex-wrap gap-2">
+                                        <div className="flex items-center gap-2 flex-wrap">
                                             <input
                                                 type="checkbox"
                                                 checked={discountEnabled}
@@ -1698,7 +1746,7 @@ export default function Orders() {
                                                     <span className="text-xs">%</span>
                                                     <button
                                                         onClick={() => setUseCustomDiscount(!useCustomDiscount)}
-                                                        className="text-xs text-primary hover:underline ml-1"
+                                                        className="text-xs text-primary hover:underline"
                                                     >
                                                         {useCustomDiscount ? "Reset" : "Custom"}
                                                     </button>
@@ -1708,12 +1756,11 @@ export default function Orders() {
                                         <span className="data-table text-destructive">-{formatPKR(discountAmount)}</span>
                                     </div>
 
-                                    <div className="flex justify-between font-semibold text-lg border-t border-border pt-2">
+                                    <div className="flex justify-between font-semibold text-base md:text-lg border-t border-border pt-2">
                                         <span>Total:</span>
                                         <span className="data-table">{formatPKR(total)}</span>
                                     </div>
                                 </div>
-
                                 {/* Payment Method */}
                                 <div className="mt-4">
                                     <label className="block text-sm font-medium text-muted-foreground mb-2">
@@ -1851,7 +1898,7 @@ export default function Orders() {
                                             localStorage.removeItem('pos_cart');
                                         }}
                                         disabled={cart.length === 0}
-                                        data-testid="button-clear-cart"
+                                        className="text-sm"
                                     >
                                         Clear Cart
                                     </Button>
@@ -1859,10 +1906,11 @@ export default function Orders() {
                                         variant="outline"
                                         size="sm"
                                         onClick={handlePrintReceipt}
-                                        data-testid="button-print-receipt"
+                                        className="text-sm"
                                     >
-                                        <Printer className="h-4 w-4 mr-2" />
-                                        Print Receipt
+                                        <Printer className="h-4 w-4 mr-1 sm:mr-2" />
+                                        <span className="hidden sm:inline">Print Receipt</span>
+                                        <span className="sm:hidden">Print</span>
                                     </Button>
                                 </div>
                             </CardContent>

@@ -22,7 +22,7 @@ const STORAGE_KEYS = {
 };
 
 export default function Returns() {
-    const pageSize = 20; // Changed to 20 for testing
+    const pageSize = 50; // Changed to 20 for testing
     const [location] = useLocation();
     
     // Load saved state

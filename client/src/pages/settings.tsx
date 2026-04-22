@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "../services/electron-api";
-import { Download, Upload, Database, AlertCircle, CheckCircle, Loader2, Shield, KeyRound, Eye, EyeOff, Save } from "lucide-react";
+import { Download, Upload, Database, AlertCircle, CheckCircle, Loader2, Shield, KeyRound, Eye, EyeOff, Save, RefreshCw, AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { queryClient } from "../lib/queryClient";
 import { useLocation } from "wouter";
@@ -26,7 +26,9 @@ const OPERATOR_TABS = [
     { name: "Categories", href: "/categories" },
     { name: "Expenses", href: "/expenses" },
     { name: "Employees", href: "/employees" },
-    { name: "Damaged Stock", href: "/damaged" },
+    { name: "Net Profit", href: "/net-profit" },
+
+    // { name: "Damaged Stock", href: "/damaged" },
     { name: "Settings", href: "/settings" },
 ];
 
@@ -54,6 +56,40 @@ export default function SettingsPage() {
     const [googleDriveToken, setGoogleDriveToken] = useState('');
     const [isBackupEnabled, setIsBackupEnabled] = useState(false);
     const [isConnecting, setIsConnecting] = useState(false);
+    // Add this state to your SettingsPage component
+    const [driveStorage, setDriveStorage] = useState(null);
+    const [isLoadingStorage, setIsLoadingStorage] = useState(false);
+console.log(driveStorage,'jj9')
+    // Add this function
+    const fetchDriveStorage = async () => {
+        setIsLoadingStorage(true);
+        try {
+            const result = await window.electronAPI.getGoogleDriveStorage?.();
+            if (result?.success) {
+                setDriveStorage(result.data);
+            } else if (result?.needsReauth) {
+                toast({
+                    title: "Connection Expired",
+                    description: "Please reconnect Google Drive",
+                    variant: "destructive"
+                });
+            }
+        } catch (error) {
+            console.error('Failed to fetch storage:', error);
+        } finally {
+            setIsLoadingStorage(false);
+        }
+    };
+
+    // Call this when Google Drive is connected
+    useEffect(() => {
+        if (googleDriveToken) {
+            fetchDriveStorage();
+            // Refresh storage info every 5 minutes
+            const interval = setInterval(fetchDriveStorage, 5 * 60 * 1000);
+            return () => clearInterval(interval);
+        }
+    }, [googleDriveToken]);
 
     // Add this function to handle Google Drive connection
     // Add this useEffect to set up the token listener once when component mounts
@@ -146,8 +182,8 @@ export default function SettingsPage() {
     }, []);
     // Add this function
     const performAutoBackup = async () => {
-        if (!googleDriveToken || !dbInfo?.path) {
-            console.log('Auto backup skipped: Not connected');
+        if (!dbInfo?.path) {
+            console.log('Auto backup skipped: No database path');
             return;
         }
 
@@ -160,12 +196,23 @@ export default function SettingsPage() {
 
             if (result?.success) {
                 console.log('✅ Auto backup successful:', result.name);
-                // Optional: Store last backup time
                 localStorage.setItem('last_auto_backup', new Date().toISOString());
                 toast({
                     title: "Auto Backup",
                     description: `Backed up at ${new Date().toLocaleTimeString()}`,
                     duration: 2000
+                });
+            } else if (result?.needsReauth) {
+                console.log('Token expired, need to reconnect');
+                // Clear stored tokens
+                localStorage.removeItem('google_drive_token');
+                localStorage.removeItem('google_drive_connected');
+                setGoogleDriveToken('');
+                setAutoBackupEnabled(false);
+                toast({
+                    title: "Connection Expired",
+                    description: "Please reconnect to Google Drive",
+                    variant: "destructive"
                 });
             } else {
                 console.error('❌ Auto backup failed:', result?.error);
@@ -845,6 +892,70 @@ export default function SettingsPage() {
                                 )}
                             </CardContent>
                         </Card>
+
+                        {googleDriveToken && driveStorage && (
+                            <div className="mt-4 p-4 bg-muted/30 rounded-lg">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h4 className="text-sm font-semibold">Google Drive Storage</h4>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={fetchDriveStorage}
+                                        disabled={isLoadingStorage}
+                                    >
+                                        <RefreshCw className={`h-3 w-3 ${isLoadingStorage ? 'animate-spin' : ''}`} />
+                                    </Button>
+                                </div>
+
+                                {/* Storage Bar */}
+                                <div className="space-y-2">
+                                    <div className="flex justify-between text-xs">
+                                        <span>Used: {driveStorage.usedGB} GB</span>
+                                        <span>Free: {driveStorage.remainingGB} GB</span>
+                                        <span>Total: {driveStorage.totalGB} GB</span>
+                                    </div>
+                                    <div className="w-full bg-gray-200 rounded-full h-2.5">
+                                        <div
+                                            className={`h-2.5 rounded-full transition-all ${driveStorage.usagePercent > 90 ? 'bg-red-600' :
+                                                    driveStorage.usagePercent > 70 ? 'bg-yellow-500' : 'bg-green-600'
+                                                }`}
+                                            style={{ width: `${driveStorage.usagePercent}%` }}
+                                        />
+                                    </div>
+                                    <p className="text-xs text-muted-foreground text-center">
+                                        {driveStorage.usagePercent}% used ({driveStorage.usedGB} GB of {driveStorage.totalGB} GB)
+                                    </p>
+
+                                    {/* Warning for low space */}
+                                    {driveStorage.remainingGB < 5 && (
+                                        <div className="bg-red-50 border border-red-200 rounded p-2 mt-2">
+                                            <p className="text-xs text-red-600 flex items-center gap-1">
+                                                <AlertTriangle className="h-3 w-3" />
+                                                Low storage space! Only {driveStorage.remainingGB} GB remaining.
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Backup file list - optional */}
+                                {/* <div className="mt-3">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="w-full text-xs"
+                                        onClick={async () => {
+                                            const result = await window.electronAPI.listGoogleDriveBackups?.();
+                                            if (result?.success) {
+                                                // Show backup files list
+                                                console.log('Backup files:', result.files);
+                                            }
+                                        }}
+                                    >
+                                        View Backup Files
+                                    </Button>
+                                </div> */}
+                            </div>
+                        )}
                     </div>
                 </TabsContent>
             </Tabs>

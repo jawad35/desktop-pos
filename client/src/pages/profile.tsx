@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { useHeader } from "@/contexts/HeaderContext";
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5002/api';
+const API_URL = 'https://admin-pod.onrender.com/api';
 
 export function Profile() {
     const [shop, setShop] = useState<any>(null);

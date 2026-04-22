@@ -9,10 +9,68 @@ import { google } from 'googleapis';
 import http from 'http';
 import url from 'url';
 import FormData from 'form-data';
+const API_URL = 'https://admin-pod.onrender.com/api';
 
 let oauthServer = null;
 
 export function setupIpcHandlers() {
+    async function getValidAccessToken() {
+        const userDataPath = app.getPath('userData');
+        const tokenPath = path.join(userDataPath, 'google-token.json');
+
+        if (!fs.existsSync(tokenPath)) {
+            throw new Error('No saved tokens found. Please connect to Google Drive first.');
+        }
+
+        const tokenData = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+
+        // Check if token is expired or about to expire (within 5 minutes)
+        const isExpired = Date.now() >= tokenData.expiry_date - 5 * 60 * 1000;
+
+        if (isExpired && tokenData.refresh_token) {
+            console.log('Access token expired, refreshing...');
+
+            const CLIENT_ID = '1029274681556-ps3n13bvbjhogipcj7rsblfqu27041jq.apps.googleusercontent.com';
+            const CLIENT_SECRET = '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';
+            const REDIRECT_URI = 'https://admin-pod.onrender.com/';
+
+            const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+            oauth2Client.setCredentials({
+                refresh_token: tokenData.refresh_token
+            });
+
+            try {
+                const { credentials } = await oauth2Client.refreshAccessToken();
+
+                // Update stored tokens
+                const newTokenData = {
+                    ...tokenData,
+                    access_token: credentials.access_token,
+                    expiry_date: credentials.expiry_date,
+                    refresh_token: credentials.refresh_token || tokenData.refresh_token
+                };
+
+                fs.writeFileSync(tokenPath, JSON.stringify(newTokenData));
+
+                // Send new token to renderer
+                const windows = BrowserWindow.getAllWindows();
+                windows.forEach(win => {
+                    if (!win.isDestroyed()) {
+                        win.webContents.send('google-token', credentials.access_token);
+                    }
+                });
+
+                console.log('Token refreshed successfully');
+                return credentials.access_token;
+
+            } catch (error) {
+                console.error('Failed to refresh token:', error);
+                throw new Error('Please reconnect to Google Drive');
+            }
+        }
+
+        return tokenData.access_token;
+    }
 
     // ========== DATA MANAGEMENT ==========
     ipcMain.handle('data:getLocation', () => {
@@ -2025,21 +2083,21 @@ export function setupIpcHandlers() {
 
     // Add this handler in ipcHandlers.js
     ipcMain.handle('db:getProfitData', async (event, startDate, endDate) => {
-    try {
-        const db = getDb();
-        
-        // Calculate number of days in the period
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-        const daysDiff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-        
-        // Helper function to get days in a specific month
-        const getDaysInMonth = (year, month) => {
-            return new Date(year, month + 1, 0).getDate();
-        };
-        
-        // Get sales with profit (these are already correct - count full amount when sold)
-        const sales = db.prepare(`
+        try {
+            const db = getDb();
+
+            // Calculate number of days in the period
+            const start = new Date(startDate);
+            const end = new Date(endDate);
+            const daysDiff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
+            // Helper function to get days in a specific month
+            const getDaysInMonth = (year, month) => {
+                return new Date(year, month + 1, 0).getDate();
+            };
+
+            // Get sales with profit (these are already correct - count full amount when sold)
+            const sales = db.prepare(`
             SELECT 
                 si.id,
                 p.name as product_name,
@@ -2054,22 +2112,22 @@ export function setupIpcHandlers() {
             WHERE date(s.created_at) BETWEEN date(?) AND date(?)
             ORDER BY s.created_at DESC
         `).all(startDate, endDate);
-        
-        // Calculate sales totals
-        let totalSales = 0;
-        let totalCOGS = 0;
-        let grossProfit = 0;
-        
-        for (const sale of sales) {
-            totalSales += sale.total;
-            const profit = sale.profit || 0;
-            grossProfit += profit;
-            totalCOGS += sale.total - profit;
-        }
-        
-        // Get SALARIES - SPREAD ACROSS DAYS (don't count full amount on payment day)
-        // First get all paid salaries that fall within the period or before
-        const salaries = db.prepare(`
+
+            // Calculate sales totals
+            let totalSales = 0;
+            let totalCOGS = 0;
+            let grossProfit = 0;
+
+            for (const sale of sales) {
+                totalSales += sale.total;
+                const profit = sale.profit || 0;
+                grossProfit += profit;
+                totalCOGS += sale.total - profit;
+            }
+
+            // Get SALARIES - SPREAD ACROSS DAYS (don't count full amount on payment day)
+            // First get all paid salaries that fall within the period or before
+            const salaries = db.prepare(`
             SELECT 
                 sa.id,
                 e.name as employee_name,
@@ -2086,131 +2144,131 @@ export function setupIpcHandlers() {
             JOIN employees e ON sa.employee_id = e.id
             WHERE sa.status = 'paid'
         `).all();
-        
-        let totalSalaries = 0;
-        
-        // For each salary, calculate daily rate and add only the days within the period
-        for (const salary of salaries) {
-            const salaryDate = salary.payment_date || salary.created_at;
-            if (!salaryDate) continue;
-            
-            const salaryYear = new Date(salaryDate).getFullYear();
-            const salaryMonth = new Date(salaryDate).getMonth();
-            const daysInMonth = getDaysInMonth(salaryYear, salaryMonth);
-            const dailyRate = salary.net_salary / daysInMonth;
-            
-            // Calculate how many days of this salary fall within the selected period
-            const salaryStart = new Date(salaryYear, salaryMonth, 1);
-            const salaryEnd = new Date(salaryYear, salaryMonth, daysInMonth);
-            
-            const periodStart = new Date(startDate);
-            const periodEnd = new Date(endDate);
-            
-            const overlapStart = new Date(Math.max(salaryStart.getTime(), periodStart.getTime()));
-            const overlapEnd = new Date(Math.min(salaryEnd.getTime(), periodEnd.getTime()));
-            
-            if (overlapStart <= overlapEnd) {
-                const daysInPeriod = Math.ceil((overlapEnd.getTime() - overlapStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-                totalSalaries += dailyRate * daysInPeriod;
+
+            let totalSalaries = 0;
+
+            // For each salary, calculate daily rate and add only the days within the period
+            for (const salary of salaries) {
+                const salaryDate = salary.payment_date || salary.created_at;
+                if (!salaryDate) continue;
+
+                const salaryYear = new Date(salaryDate).getFullYear();
+                const salaryMonth = new Date(salaryDate).getMonth();
+                const daysInMonth = getDaysInMonth(salaryYear, salaryMonth);
+                const dailyRate = salary.net_salary / daysInMonth;
+
+                // Calculate how many days of this salary fall within the selected period
+                const salaryStart = new Date(salaryYear, salaryMonth, 1);
+                const salaryEnd = new Date(salaryYear, salaryMonth, daysInMonth);
+
+                const periodStart = new Date(startDate);
+                const periodEnd = new Date(endDate);
+
+                const overlapStart = new Date(Math.max(salaryStart.getTime(), periodStart.getTime()));
+                const overlapEnd = new Date(Math.min(salaryEnd.getTime(), periodEnd.getTime()));
+
+                if (overlapStart <= overlapEnd) {
+                    const daysInPeriod = Math.ceil((overlapEnd.getTime() - overlapStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                    totalSalaries += dailyRate * daysInPeriod;
+                }
             }
-        }
-        
-        // Get EXPENSES - handle recurring expenses properly
-        const expenses = db.prepare(`
+
+            // Get EXPENSES - handle recurring expenses properly
+            const expenses = db.prepare(`
             SELECT * FROM expenses 
             WHERE date(created_at) BETWEEN date(?) AND date(?)
             OR is_recurring = 1
             ORDER BY created_at DESC
         `).all(startDate, endDate);
-        
-        let totalExpenses = 0;
-        
-        // Get all recurring expenses (including those not in the date range)
-        const allRecurringExpenses = db.prepare(`
+
+            let totalExpenses = 0;
+
+            // Get all recurring expenses (including those not in the date range)
+            const allRecurringExpenses = db.prepare(`
             SELECT * FROM expenses 
             WHERE is_recurring = 1
         `).all();
-        
-        // Add recurring expenses that apply to this period
-        for (const expense of allRecurringExpenses) {
-            let dailyAmount = 0;
-            const expenseAmount = expense.amount || 0;
-            
-            switch (expense.frequency) {
-                case 'daily':
-                    dailyAmount = expenseAmount;
-                    break;
-                case 'weekly':
-                    dailyAmount = expenseAmount / 7;
-                    break;
-                case 'monthly':
-                    dailyAmount = expenseAmount / 30;
-                    break;
-                case 'yearly':
-                    dailyAmount = expenseAmount / 365;
-                    break;
-                default:
-                    dailyAmount = 0;
+
+            // Add recurring expenses that apply to this period
+            for (const expense of allRecurringExpenses) {
+                let dailyAmount = 0;
+                const expenseAmount = expense.amount || 0;
+
+                switch (expense.frequency) {
+                    case 'daily':
+                        dailyAmount = expenseAmount;
+                        break;
+                    case 'weekly':
+                        dailyAmount = expenseAmount / 7;
+                        break;
+                    case 'monthly':
+                        dailyAmount = expenseAmount / 30;
+                        break;
+                    case 'yearly':
+                        dailyAmount = expenseAmount / 365;
+                        break;
+                    default:
+                        dailyAmount = 0;
+                }
+
+                totalExpenses += dailyAmount * daysDiff;
             }
-            
-            totalExpenses += dailyAmount * daysDiff;
-        }
-        
-        // Add one-time expenses that fall within the date range
-        for (const expense of expenses) {
-            if (!expense.is_recurring || expense.frequency === 'one-time') {
-                totalExpenses += expense.amount || 0;
+
+            // Add one-time expenses that fall within the date range
+            for (const expense of expenses) {
+                if (!expense.is_recurring || expense.frequency === 'one-time') {
+                    totalExpenses += expense.amount || 0;
+                }
             }
+
+            const netProfit = grossProfit - totalSalaries - totalExpenses;
+
+            // Format salaries for display (show full amount but note it's spread)
+            const formattedSalaries = salaries.map(s => ({
+                id: s.id,
+                employee_name: s.employee_name,
+                net_salary: s.net_salary,
+                payment_date: s.payment_date || s.created_at,
+                status: s.status,
+                note: `Daily rate: ${(s.net_salary / getDaysInMonth(new Date(s.payment_date || s.created_at).getFullYear(), new Date(s.payment_date || s.created_at).getMonth())).toFixed(2)}/day`
+            }));
+
+            // Format expenses for display
+            const formattedExpenses = expenses.map(e => ({
+                id: e.id,
+                title: e.title,
+                category: e.category,
+                amount: e.amount,
+                frequency: e.frequency,
+                is_recurring: e.is_recurring,
+                created_at: e.created_at,
+                daily_cost: e.is_recurring ? (
+                    e.frequency === 'daily' ? e.amount :
+                        e.frequency === 'weekly' ? e.amount / 7 :
+                            e.frequency === 'monthly' ? e.amount / 30 :
+                                e.frequency === 'yearly' ? e.amount / 365 : 0
+                ) : 0
+            }));
+
+            return {
+                period: { startDate, endDate, days: daysDiff },
+                summary: {
+                    totalSales,
+                    totalCOGS,
+                    grossProfit,
+                    totalSalaries,
+                    totalExpenses,
+                    netProfit
+                },
+                sales,
+                salaries: formattedSalaries,
+                expenses: formattedExpenses
+            };
+        } catch (error) {
+            console.error('Error in getProfitData:', error);
+            throw error;
         }
-        
-        const netProfit = grossProfit - totalSalaries - totalExpenses;
-        
-        // Format salaries for display (show full amount but note it's spread)
-        const formattedSalaries = salaries.map(s => ({
-            id: s.id,
-            employee_name: s.employee_name,
-            net_salary: s.net_salary,
-            payment_date: s.payment_date || s.created_at,
-            status: s.status,
-            note: `Daily rate: ${(s.net_salary / getDaysInMonth(new Date(s.payment_date || s.created_at).getFullYear(), new Date(s.payment_date || s.created_at).getMonth())).toFixed(2)}/day`
-        }));
-        
-        // Format expenses for display
-        const formattedExpenses = expenses.map(e => ({
-            id: e.id,
-            title: e.title,
-            category: e.category,
-            amount: e.amount,
-            frequency: e.frequency,
-            is_recurring: e.is_recurring,
-            created_at: e.created_at,
-            daily_cost: e.is_recurring ? (
-                e.frequency === 'daily' ? e.amount :
-                e.frequency === 'weekly' ? e.amount / 7 :
-                e.frequency === 'monthly' ? e.amount / 30 :
-                e.frequency === 'yearly' ? e.amount / 365 : 0
-            ) : 0
-        }));
-        
-        return {
-            period: { startDate, endDate, days: daysDiff },
-            summary: {
-                totalSales,
-                totalCOGS,
-                grossProfit,
-                totalSalaries,
-                totalExpenses,
-                netProfit
-            },
-            sales,
-            salaries: formattedSalaries,
-            expenses: formattedExpenses
-        };
-    } catch (error) {
-        console.error('Error in getProfitData:', error);
-        throw error;
-    }
-});
+    });
 
     // Update admin PIN - sync with server and local
     ipcMain.handle('app:updateAdminPin', async (event, oldPin, newPin) => {
@@ -2232,7 +2290,6 @@ export function setupIpcHandlers() {
 
             // Call server API to update PIN in database
             let serverUpdateSuccess = false;
-            const API_URL = 'http://localhost:5002/api';
 
             try {
                 const response = await axios.post(`${API_URL}/admin-pin/change`, {
@@ -2317,14 +2374,14 @@ export function setupIpcHandlers() {
 
     ipcMain.handle('google:connect', async () => {
         return new Promise((resolve, reject) => {
-            const CLIENT_ID = '';
-            const CLIENT_SECRET = '';
+            const CLIENT_ID = '1029274681556-ps3n13bvbjhogipcj7rsblfqu27041jq.apps.googleusercontent.com';
+            const CLIENT_SECRET = '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';
             const REDIRECT_URI = 'http://localhost:3000';
 
             const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
 
             const authUrl = oauth2Client.generateAuthUrl({
-                access_type: 'offline',
+                access_type: 'offline', // Important: gets refresh token
                 scope: ['https://www.googleapis.com/auth/drive.file'],
                 prompt: 'consent'
             });
@@ -2337,13 +2394,33 @@ export function setupIpcHandlers() {
                 if (query.code) {
                     try {
                         const { tokens } = await oauth2Client.getToken(query.code);
-                        console.log(tokens?.access_token, 'chal yar')
+                        console.log('Got tokens:', {
+                            hasAccessToken: !!tokens.access_token,
+                            hasRefreshToken: !!tokens.refresh_token,
+                            expiryDate: tokens.expiry_date
+                        });
+
+                        // Store both access token and refresh token
+                        const userDataPath = app.getPath('userData');
+                        const tokenPath = path.join(userDataPath, 'google-token.json');
+
+                        const tokenData = {
+                            access_token: tokens.access_token,
+                            refresh_token: tokens.refresh_token,
+                            expiry_date: tokens.expiry_date,
+                            scope: tokens.scope
+                        };
+
+                        fs.writeFileSync(tokenPath, JSON.stringify(tokenData));
+
                         const windows = BrowserWindow.getAllWindows();
                         windows.forEach(win => {
                             if (!win.isDestroyed()) {
                                 win.webContents.send('google-token', tokens.access_token);
+                                win.webContents.send('google-refresh-token', tokens.refresh_token);
                             }
                         });
+
                         res.writeHead(200, { 'Content-Type': 'text/html' });
                         res.end('<h1>✅ Connected Successfully!</h1><p>You can close this window.</p><script>window.close()</script>');
                         oauthServer.close();
@@ -2361,12 +2438,17 @@ export function setupIpcHandlers() {
         });
     });
 
-    // In ipcHandlers.js - Test version that creates a text file
     ipcMain.handle('backup:uploadToGoogleDrive', async (event, { accessToken, dbPath }) => {
         try {
+            // Get valid token (auto-refresh if needed)
+            let validToken = accessToken;
+            if (!validToken) {
+                validToken = await getValidAccessToken();
+            }
+
             const oauth2Client = new google.auth.OAuth2();
             oauth2Client.setCredentials({
-                access_token: accessToken
+                access_token: validToken
             });
 
             const drive = google.drive({ version: 'v3', auth: oauth2Client });
@@ -2380,10 +2462,8 @@ export function setupIpcHandlers() {
             const fileSize = fs.statSync(dbPath).size;
             console.log(`Uploading ${fileName} (${fileSize} bytes) from ${dbPath}`);
 
-            // Create a read stream with proper error handling
             const fileStream = fs.createReadStream(dbPath);
 
-            // Upload the file
             const response = await drive.files.create({
                 requestBody: {
                     name: fileName,
@@ -2401,7 +2481,92 @@ export function setupIpcHandlers() {
 
         } catch (error) {
             console.error('Upload error:', error.message);
+
+            // If token is invalid, request re-authentication
+            if (error.message.includes('invalid_grant') || error.message.includes('expired') || error.message.includes('Please reconnect')) {
+                return { success: false, error: 'TOKEN_EXPIRED', needsReauth: true };
+            }
+
             return { success: false, error: error.message };
+        }
+    });
+    ipcMain.handle('google:checkConnection', async () => {
+        try {
+            const userDataPath = app.getPath('userData');
+            const tokenPath = path.join(userDataPath, 'google-token.json');
+
+            if (fs.existsSync(tokenPath)) {
+                const tokenData = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+                const isValid = Date.now() < tokenData.expiry_date;
+                return {
+                    connected: true,
+                    hasValidToken: isValid,
+                    needsRefresh: !isValid && !!tokenData.refresh_token
+                };
+            }
+            return { connected: false };
+        } catch (error) {
+            return { connected: false, error: error.message };
+        }
+    });
+
+    // Add handler to disconnect/remove tokens
+    ipcMain.handle('google:disconnect', async () => {
+        const { app } = require('electron');
+        const userDataPath = app.getPath('userData');
+        const tokenPath = path.join(userDataPath, 'google-token.json');
+
+        if (fs.existsSync(tokenPath)) {
+            fs.unlinkSync(tokenPath);
+        }
+        return { success: true };
+    });
+    ipcMain.handle('google:getStorageInfo', async (event) => {
+        try {
+            const validToken = await getValidAccessToken();
+
+            const oauth2Client = new google.auth.OAuth2();
+            oauth2Client.setCredentials({
+                access_token: validToken
+            });
+
+            const drive = google.drive({ version: 'v3', auth: oauth2Client });
+
+            // Get about information (storage quota)
+            const response = await drive.about.get({
+                fields: 'storageQuota'
+            });
+
+            const quota = response.data.storageQuota;
+
+            // Convert bytes to GB for easier reading
+            const totalGB = quota.limit / (1024 * 1024 * 1024);
+            const usedGB = quota.usage / (1024 * 1024 * 1024);
+            const remainingGB = (quota.limit - quota.usage) / (1024 * 1024 * 1024);
+            const usagePercent = (quota.usage / quota.limit) * 100;
+
+            return {
+                success: true,
+                data: {
+                    total: quota.limit, // bytes
+                    used: quota.usage, // bytes
+                    remaining: quota.limit - quota.usage, // bytes
+                    totalGB: totalGB.toFixed(2),
+                    usedGB: usedGB.toFixed(2),
+                    remainingGB: remainingGB.toFixed(2),
+                    usagePercent: usagePercent.toFixed(1),
+                    usageInDrive: quota.usageInDrive || 0,
+                    usageInTrash: quota.usageInTrash || 0
+                }
+            };
+
+        } catch (error) {
+            console.error('Error getting storage info:', error);
+            return {
+                success: false,
+                error: error.message,
+                needsReauth: error.message.includes('invalid_grant') || error.message.includes('expired')
+            };
         }
     });
     ipcMain.handle('db:getPath', () => {
@@ -2410,6 +2575,92 @@ export function setupIpcHandlers() {
         return { success: true, path: dbPath };
     });
 
+    // Add this IPC handler in main.js (after other handlers)
+    ipcMain.handle('app:checkSubscriptionStatus', async () => {
+        try {
+            const licenseData = licenseManager.loadLicense();
+
+            if (!licenseData) {
+                return {
+                    status: 'no_license',
+                    message: 'No license found. Please activate your license.',
+                    hasLicense: false
+                };
+            }
+
+            const shopId = licenseData.shop?.shopId || licenseData.shop?.id;
+
+            if (!shopId) {
+                return {
+                    status: 'no_shop',
+                    message: 'No shop information found in license.',
+                    hasLicense: true
+                };
+            }
+
+            // Call server API to check subscription
+            const response = await axios.get(`${API_URL}/shops/${shopId}/subscription-status`, {
+                timeout: 10000,
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (response.data && response.data.success) {
+                const subscriptionStatus = response.data.data.subscriptionStatus;
+                const expiryDate = response.data.data.expiryDate;
+                const shopName = response.data.data.shopName;
+
+                let message = '';
+                switch (subscriptionStatus) {
+                    case 'active':
+                        message = expiryDate ? `Active until ${new Date(expiryDate).toLocaleDateString()}` : 'Active';
+                        break;
+                    case 'expired':
+                        message = expiryDate ? `Expired on ${new Date(expiryDate).toLocaleDateString()}` : 'Subscription expired';
+                        break;
+                    case 'suspended':
+                        message = 'Subscription suspended. Please contact support.';
+                        break;
+                    default:
+                        message = 'Unknown subscription status';
+                }
+
+                return {
+                    status: subscriptionStatus,
+                    message: message,
+                    shopName: shopName,
+                    expiryDate: expiryDate,
+                    hasLicense: true,
+                    isValid: subscriptionStatus === 'active'
+                };
+            }
+
+            return {
+                status: 'error',
+                message: 'Failed to verify subscription status',
+                hasLicense: true
+            };
+
+        } catch (error) {
+            console.error('Error checking subscription:', error);
+
+            // If server is unreachable but license is locally valid, allow access
+            const licenseData = licenseManager.loadLicense();
+            if (licenseData && licenseManager.isLicenseValid(licenseData)) {
+                return {
+                    status: 'offline_mode',
+                    message: 'Server unreachable. Using cached license.',
+                    hasLicense: true,
+                    isValid: true
+                };
+            }
+
+            return {
+                status: 'error',
+                message: 'Unable to verify subscription. Please check your internet connection.',
+                hasLicense: !!licenseData
+            };
+        }
+    });
 
     ipcMain.handle('app:restart', () => {
         app.relaunch();

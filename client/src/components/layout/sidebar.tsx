@@ -23,7 +23,9 @@ import {
   Database,
   Key,
   Banknote,
-  Undo2
+  Undo2,
+  HandCoins,
+  ShoppingBag
 } from "lucide-react";
 import { useHeader } from "@/contexts/HeaderContext";
 import { useAuth } from "@/hooks/useAuth";
@@ -37,9 +39,9 @@ import { useState } from "react";
 // All available navigation items
 const ALL_NAVIGATION = [
   { name: "Dashboard", href: "/", icon: ChartLine, title: "Dashboard", subtitle: "Overview of your business", adminOnly: false },
-  { name: "POS Terminal", href: "/pos", icon: CreditCard, title: "POS Terminal", subtitle: "Process customer sales", adminOnly: false },
+  { name: "POS Terminal", href: "/pos", icon: ShoppingBag, title: "POS Terminal", subtitle: "Process customer sales", adminOnly: false },
   { name: "Products", href: "/products", icon: Box, title: "Products", subtitle: "Manage your product catalog", adminOnly: true },
-  { name: "Sales", href: "/sales", icon: Receipt, title: "Sales", subtitle: "View and manage all sales transactions", adminOnly: false },
+  { name: "Sales", href: "/sales", icon: HandCoins, title: "Sales", subtitle: "View and manage all sales transactions", adminOnly: false },
   { name: "Returns", href: "/returns", icon: Undo2, title: "Returns", subtitle: "View and manage all returns transactions", adminOnly: false },
   { name: "Purchases", href: "/purchases", icon: ShoppingCart, title: "Purchases", subtitle: "Record purchase orders", adminOnly: true },
   { name: "Suppliers", href: "/suppliers", icon: Truck, title: "Suppliers", subtitle: "Manage supplier information", adminOnly: true },

@@ -31,15 +31,19 @@ export function AdminPinModal({ isOpen, onClose, onSuccess }: AdminPinModalProps
 
         try {
             const result = await api.verifyAdminPin(pin);
-            
+
             if (result.success) {
                 await api.setLoginType('admin');
                 toast({
                     title: "Admin Mode Activated",
-                    description: "You now have access to admin features",
+                    description: "Restarting application to apply changes...",
                 });
-                onSuccess();
+
+                // Close modal first
                 onClose();
+
+                // Small delay to show toast message
+                window.location.reload();
             } else {
                 setError('Invalid PIN');
                 toast({

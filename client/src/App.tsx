@@ -96,7 +96,7 @@ function Router() {
           <Route path="/admin" component={AdminDashboard} />
           <Route path="/settings" component={SettingsPage} />
           <Route path="/profile" component={Profile} />
-          <Route component={isLicensed === true ? Home : NotFound} />
+          <Route component={isLicensed === true ? POS : NotFound} />
         </Switch>
       </AppLayout>
     );

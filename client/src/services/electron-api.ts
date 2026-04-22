@@ -9,7 +9,7 @@ type ElectronAPI = {
     connectGoogleDrive: () => Promise<any>;
     onGoogleToken: (callback: (token: string) => void) => void;
     uploadToGoogleDrive: (data: { accessToken: string; dbPath: string }) => Promise<any>;
-
+    getGoogleDriveStorage: () => Promise<any>;
 
     // Products
     getProducts: (filters?: any) => Promise<any>;
@@ -109,6 +109,7 @@ type ElectronAPI = {
     updateAdminPin: (oldPin: string, newPin: string) => Promise<any>;
     getLoginType: () => Promise<any>;
     setLoginType: (loginType: string) => Promise<any>;
+    restartApp: () => Promise<void>;
 };
 
 // Check if running in Electron
@@ -127,6 +128,7 @@ const electronAPI: ElectronAPI = {
     checkLicense: () => window.electronAPI.checkLicense(),
     activateLicenseWithPin: (licenseKey, adminPin) => window.electronAPI.activateLicenseWithPin(licenseKey, adminPin),  // Add this line
     verifyLicenseOnline: () => window.electronAPI.verifyLicenseOnline(),
+    getGoogleDriveStorage: () => window.electronAPI.getGoogleDriveStorage(),
 
     connectGoogleDrive: () => window.electronAPI.connectGoogleDrive(),
     onGoogleToken: (callback) => window.electronAPI.onGoogleToken(callback),
@@ -218,6 +220,7 @@ const electronAPI: ElectronAPI = {
     // Settings
     getSettings: () => window.electronAPI.getSettings(),
     updateSettings: (data) => window.electronAPI.updateSettings(data),
+    checkSubscriptionStatus: () => window.electronAPI.checkSubscriptionStatus(),
 
     // Transaction Logs
     getTransactionLogs: () => window.electronAPI.getTransactionLogs(),
@@ -226,6 +229,7 @@ const electronAPI: ElectronAPI = {
     getDataLocation: () => window.electronAPI.getDataLocation(),
     backupData: () => window.electronAPI.backupData(),
     openDataFolder: () => window.electronAPI.openDataFolder(),
+    restartApp: () => window.electronAPI.restartApp(),
 
 };
 
@@ -289,6 +293,10 @@ const webAPI: ElectronAPI = {
     // In webAPI object, add:
     getProfitData: (startDate, endDate) => fetch(`/api/profit-dashboard?startDate=${startDate}&endDate=${endDate}`).then(r => r.json()),
     openDataFolder: () => Promise.resolve(),
+    restartApp: async () => {
+        console.log('Restart not available in web version');
+        window.location.reload(); // Just reload the page for web
+    },
 };
 
 // Export the appropriate API

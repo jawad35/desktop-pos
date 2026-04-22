@@ -7,7 +7,7 @@ import fs from 'fs';
 import { getDb } from './database.js';
 
 // Use your local server URL for development
-const API_URL = 'http://localhost:5002/api';
+const API_URL = 'https://admin-pod.onrender.com/api';
 
 export function setupLicenseHandlers() {
 
