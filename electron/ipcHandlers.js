@@ -1471,5 +1471,10 @@ export function setupIpcHandlers() {
         }
     });
 
+    ipcMain.handle('app:restart', () => {
+        app.relaunch();
+        app.exit();
+    });
+
     console.log('✅ All IPC handlers registered successfully');
 }

@@ -315,6 +315,43 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Utility
     onDatabaseUpdate: (callback) => {
         ipcRenderer.on('db:updated', (event, data) => callback(data));
+    },
+
+    getDatabaseInfo: async () => {
+        return await ipcRenderer.invoke('db:getInfo');
+    },
+ exportDatabase: async () => {
+    console.log("🔍 [PRELOAD] exportDatabase called");
+    const result = await ipcRenderer.invoke('db:export');
+    console.log("🔍 [PRELOAD] exportDatabase result:", result);
+    
+    if (result.success && result.data) {
+        // Convert array back to Uint8Array and trigger download
+        const uint8Array = new Uint8Array(result.data);
+        const blob = new Blob([uint8Array], { type: 'application/x-sqlite3' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = result.fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        return { success: true, path: result.fileName };
     }
+    
+    return result;
+},
+    importDatabase: async (fileData) => {
+        console.log("🔍 [PRELOAD] importDatabase called with data length:", fileData?.length);
+        const result = await ipcRenderer.invoke('db:import', fileData);
+        console.log("🔍 [PRELOAD] importDatabase result:", result);
+        return result;
+    },
+
+    restartApp: async () => {
+    return await ipcRenderer.invoke('app:restart');
+},
 
 });
