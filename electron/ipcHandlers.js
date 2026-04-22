@@ -30,8 +30,8 @@ export function setupIpcHandlers() {
         if (isExpired && tokenData.refresh_token) {
             console.log('Access token expired, refreshing...');
 
-            const CLIENT_ID = '1029274681556-ps3n13bvbjhogipcj7rsblfqu27041jq.apps.googleusercontent.com';
-            const CLIENT_SECRET = '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';
+            const CLIENT_ID = '';
+            const CLIENT_SECRET = '';
             const REDIRECT_URI = 'https://admin-pod.onrender.com/';
 
             const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
