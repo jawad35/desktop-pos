@@ -2372,6 +2372,7 @@ export function setupIpcHandlers() {
         }
     });
 
+
     ipcMain.handle('google:connect', async () => {
         return new Promise((resolve, reject) => {
             const CLIENT_ID = '1029274681556-ps3n13bvbjhogipcj7rsblfqu27041jq.apps.googleusercontent.com';
@@ -2574,7 +2575,30 @@ export function setupIpcHandlers() {
         const dbPath = path.join(userDataPath, 'pos.db');
         return { success: true, path: dbPath };
     });
+    // Add this to your Electron IPC handlers
+    ipcMain.handle('wipe-database', async () => {
+        try {
+            const dbPath = path.join(app.getPath('userData'), 'pos.db');
 
+            // Close database connection if open
+            if (db) {
+                db.close();
+            }
+
+            // Delete the database file
+            if (fs.existsSync(dbPath)) {
+                fs.unlinkSync(dbPath);
+            }
+
+            // Reinitialize database
+            await initDatabase();
+
+            return { success: true };
+        } catch (error) {
+            console.error('Failed to wipe database:', error);
+            return { success: false, error: error.message };
+        }
+    });
     // Add this IPC handler in main.js (after other handlers)
     ipcMain.handle('app:checkSubscriptionStatus', async () => {
         try {

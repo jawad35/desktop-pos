@@ -12,6 +12,7 @@ import { queryClient } from "../lib/queryClient";
 import { useLocation } from "wouter";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Trash2 } from "lucide-react";
 
 // Define all available tabs for operator access
 const OPERATOR_TABS = [
@@ -59,8 +60,49 @@ export default function SettingsPage() {
     // Add this state to your SettingsPage component
     const [driveStorage, setDriveStorage] = useState(null);
     const [isLoadingStorage, setIsLoadingStorage] = useState(false);
-console.log(driveStorage,'jj9')
+    console.log(driveStorage, 'jj9')
+    const [isWipeModalOpen, setIsWipeModalOpen] = useState(false);
+    const [wipeConfirmText, setWipeConfirmText] = useState("");
+    const [isWiping, setIsWiping] = useState(false);
     // Add this function
+
+    const handleWipeDatabase = async () => {
+    if (wipeConfirmText !== "WIPE ALL DATA") {
+        toast({ 
+            title: "Confirmation Required", 
+            description: "Please type 'WIPE ALL DATA' to confirm", 
+            variant: "destructive" 
+        });
+        return;
+    }
+
+    setIsWiping(true);
+    try {
+        const result = await window.electronAPI.wipeDatabase?.();
+        if (result?.success) {
+            toast({ 
+                title: "Database Wiped", 
+                description: "All data has been cleared. App will restart...", 
+                variant: "destructive" 
+            });
+            setTimeout(async () => {
+                await window.electronAPI.restartApp();
+            }, 1500);
+        } else {
+            throw new Error(result?.error || "Failed to wipe database");
+        }
+    } catch (error: any) {
+        toast({ 
+            title: "Wipe Failed", 
+            description: error.message, 
+            variant: "destructive" 
+        });
+    } finally {
+        setIsWiping(false);
+        setIsWipeModalOpen(false);
+        setWipeConfirmText("");
+    }
+};
     const fetchDriveStorage = async () => {
         setIsLoadingStorage(true);
         try {
@@ -659,47 +701,123 @@ console.log(driveStorage,'jj9')
                 </TabsContent>
 
                 {/* Database Info Tab */}
-                <TabsContent value="database">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Database Information</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            <div className="bg-muted/30 rounded-lg p-4 space-y-2">
-                                <div className="flex items-center gap-2">
-                                    <Database className="h-5 w-5 text-primary" />
-                                    <span className="font-medium">Database Location:</span>
-                                </div>
-                                <code className="text-sm bg-background p-2 rounded block break-all">
-                                    {dbInfo?.path || "Loading..."}
-                                </code>
+              {/* Database Info Tab */}
+<TabsContent value="database">
+    <Card>
+        <CardHeader>
+            <CardTitle>Database Information</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+            <div className="bg-muted/30 rounded-lg p-4 space-y-2">
+                <div className="flex items-center gap-2">
+                    <Database className="h-5 w-5 text-primary" />
+                    <span className="font-medium">Database Location:</span>
+                </div>
+                <code className="text-sm bg-background p-2 rounded block break-all">
+                    {dbInfo?.path || "Loading..."}
+                </code>
 
-                                {dbInfo?.size && (
-                                    <div className="flex items-center gap-2 mt-2">
-                                        <span className="font-medium">Size:</span>
-                                        <span>{dbInfo.size}</span>
-                                    </div>
-                                )}
-                            </div>
+                {dbInfo?.size && (
+                    <div className="flex items-center gap-2 mt-2">
+                        <span className="font-medium">Size:</span>
+                        <span>{dbInfo.size}</span>
+                    </div>
+                )}
+            </div>
 
-                            <div className="flex flex-col sm:flex-row gap-3">
-                                <Button onClick={handleOpenDataFolder} variant="outline">
-                                    Open Data Folder
-                                </Button>
-                                <Button onClick={fetchDbInfo} variant="ghost">
-                                    Refresh Info
-                                </Button>
-                            </div>
+            <div className="flex flex-col sm:flex-row gap-3">
+                <Button onClick={handleOpenDataFolder} variant="outline">
+                    Open Data Folder
+                </Button>
+                <Button onClick={fetchDbInfo} variant="ghost">
+                    Refresh Info
+                </Button>
+                <Button 
+                    onClick={() => setIsWipeModalOpen(true)} 
+                    variant="destructive"
+                    className="ml-auto"
+                >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Wipe Database
+                </Button>
+            </div>
 
-                            <Alert>
-                                <AlertCircle className="h-4 w-4" />
-                                <AlertDescription>
-                                    Your database is stored locally on this computer. Regular backups are recommended.
-                                </AlertDescription>
-                            </Alert>
-                        </CardContent>
-                    </Card>
-                </TabsContent>
+            <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                    Your database is stored locally on this computer. Regular backups are recommended.
+                </AlertDescription>
+            </Alert>
+        </CardContent>
+    </Card>
+</TabsContent>
+{/* Wipe Database Confirmation Modal */}
+<Dialog open={isWipeModalOpen} onOpenChange={setIsWipeModalOpen}>
+    <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+                <AlertTriangle className="h-5 w-5" />
+                Wipe Entire Database
+            </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+            <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 rounded-lg p-4">
+                <p className="text-sm text-red-800 dark:text-red-400 font-medium">
+                    ⚠️ DANGER: This action is irreversible!
+                </p>
+                <p className="text-sm text-red-700 dark:text-red-500 mt-2">
+                    This will delete ALL data including:
+                </p>
+                <ul className="text-xs text-red-600 dark:text-red-400 mt-2 space-y-1 list-disc list-inside">
+                    <li>All products and categories</li>
+                    <li>All sales and purchase records</li>
+                    <li>All customers and suppliers</li>
+                    <li>All employees and settings</li>
+                    <li>All expenses and profit records</li>
+                </ul>
+            </div>
+            
+            <div>
+                <Label htmlFor="confirmWipe" className="text-sm font-medium">
+                    Type <span className="font-bold text-red-600">"WIPE ALL DATA"</span> to confirm
+                </Label>
+                <Input
+                    id="confirmWipe"
+                    type="text"
+                    placeholder="WIPE ALL DATA"
+                    value={wipeConfirmText}
+                    onChange={(e) => setWipeConfirmText(e.target.value)}
+                    className="mt-2"
+                />
+            </div>
+        </div>
+        <DialogFooter className="flex gap-2">
+            <Button variant="outline" onClick={() => {
+                setIsWipeModalOpen(false);
+                setWipeConfirmText("");
+            }}>
+                Cancel
+            </Button>
+            <Button 
+                onClick={handleWipeDatabase} 
+                disabled={isWiping || wipeConfirmText !== "WIPE ALL DATA"}
+                variant="destructive"
+            >
+                {isWiping ? (
+                    <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Wiping...
+                    </>
+                ) : (
+                    <>
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Wipe All Data
+                    </>
+                )}
+            </Button>
+        </DialogFooter>
+    </DialogContent>
+</Dialog>
 
                 {/* Backup & Restore Tab */}
                 <TabsContent value="backup">
@@ -917,7 +1035,7 @@ console.log(driveStorage,'jj9')
                                     <div className="w-full bg-gray-200 rounded-full h-2.5">
                                         <div
                                             className={`h-2.5 rounded-full transition-all ${driveStorage.usagePercent > 90 ? 'bg-red-600' :
-                                                    driveStorage.usagePercent > 70 ? 'bg-yellow-500' : 'bg-green-600'
+                                                driveStorage.usagePercent > 70 ? 'bg-yellow-500' : 'bg-green-600'
                                                 }`}
                                             style={{ width: `${driveStorage.usagePercent}%` }}
                                         />

@@ -363,6 +363,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.on('db:updated', (event, data) => callback(data));
     },
 
+    // In preload.js
+
     // Add to preload.js
     getDatabaseInfo: async () => {
         return await ipcRenderer.invoke('db:getInfo');
@@ -435,6 +437,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getBackupConfig: () => ipcRenderer.invoke('backup:getConfig'),
     saveBackupConfig: (config) => ipcRenderer.invoke('backup:saveConfig', config),
     uploadNow: () => ipcRenderer.invoke('backup:uploadNow'),
+    wipeDatabase: () => ipcRenderer.invoke('wipe-database'),
 
     restartApp: async () => {
         return await ipcRenderer.invoke('app:restart');

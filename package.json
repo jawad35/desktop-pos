@@ -17,7 +17,7 @@
     "postinstall": "electron-builder install-app-deps",
     "rebuild:win": "electron-rebuild --platform=win32 --arch=x64"
   },
-  "build": {
+"build": {
     "appId": "com.desktop.pos",
     "productName": "POS Desktop App",
     "copyright": "Copyright © 2024",
@@ -36,10 +36,7 @@
       "target": [
         {
           "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "arch": ["x64", "arm64"]
         }
       ],
       "icon": "build/icon.icns"
@@ -48,12 +45,11 @@
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,
@@ -63,9 +59,7 @@
       "runAfterFinish": true
     },
     "linux": {
-      "target": [
-        "AppImage"
-      ],
+      "target": ["AppImage"],
       "category": "Office"
     }
   },

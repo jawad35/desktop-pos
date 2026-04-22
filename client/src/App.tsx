@@ -1,9 +1,8 @@
-import { Switch, Route, useLocation } from "wouter";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "../src/components/ui/toaster";
 import { TooltipProvider } from "../src/components/ui/tooltip";
 import { AppLayout } from "../src/components/layout/AppLayout";
-import { useEffect, useState } from "react";
+import { useEffect, useState, createContext, useContext } from "react";
 
 // Pages
 import Home from "@/pages/home";
@@ -14,7 +13,6 @@ import Sales from "@/pages/sales";
 import Purchases from "@/pages/purchases";
 import Suppliers from "@/pages/suppliers";
 import NetProfit from "@/pages/net-profit";
-
 import Categories from "@/pages/categories";
 import TransactionLogs from "@/pages/transaction-logs";
 import ReceiptManagement from "@/pages/receipt-management";
@@ -30,6 +28,19 @@ import ItemDetails from "./pages/item-details";
 import AdminDashboard from "./pages/admin";
 import { queryClient } from "./lib/queryClient";
 import ActivationScreen from "@/pages/activation";
+
+// Create a navigation context
+type NavigationContextType = {
+  currentPath: string;
+  navigateTo: (path: string) => void;
+};
+
+export const NavigationContext = createContext<NavigationContextType>({
+  currentPath: '/',
+  navigateTo: () => {},
+});
+
+export const useNavigation = () => useContext(NavigationContext);
 
 function useLicense() {
   const [isLicensed, setIsLicensed] = useState<boolean | null>(null);
@@ -49,7 +60,7 @@ function useLicense() {
         setIsLicensed(true);
       }
     } catch (error) {
-      // console.error("License check failed:", error);
+      console.error("License check failed:", error);
       setIsLicensed(false);
     }
   };
@@ -57,11 +68,78 @@ function useLicense() {
   return { isLicensed, licenseData, checkLicense };
 }
 
-function Router() {
-  const [location, setLocation] = useLocation();
-  const { isLicensed } = useLicense();
+// Main content renderer based on path
+function MainContent({ path }: { path: string }) {
+  // Handle dynamic routes
+  if (path.startsWith('/employees/') && path !== '/employees') {
+    const id = path.split('/')[2];
+    return <EmployeeDetails params={{ id }} />;
+  }
+  
+  if (path.startsWith('/item-details/')) {
+    const parts = path.split('/');
+    const id = parts[2];
+    const mode = parts[3];
+    return <ItemDetails params={{ id, mode }} />;
+  }
 
-  // Don't force redirect - let the routes handle navigation
+  // Static routes
+  switch(path) {
+    case '/':
+      return <Home />;
+    case '/pos':
+      return <POS />;
+    case '/products':
+      return <Products />;
+    case '/damaged':
+      return <DamagedStock />;
+    case '/sales':
+      return <Sales />;
+    case '/returns':
+      return <Returns />;
+    case '/purchases':
+      return <Purchases />;
+    case '/suppliers':
+      return <Suppliers />;
+    case '/net-profit':
+      return <NetProfit />;
+    case '/categories':
+      return <Categories />;
+    case '/transaction-logs':
+      return <TransactionLogs />;
+    case '/receipt-management':
+      return <ReceiptManagement />;
+    case '/expenses':
+      return <Expenses />;
+    case '/employees':
+      return <Employees />;
+    case '/admin':
+      return <AdminDashboard />;
+    case '/settings':
+      return <SettingsPage />;
+    case '/profile':
+      return <Profile />;
+    default:
+      return <NotFound />;
+  }
+}
+
+function Router() {
+  const { isLicensed } = useLicense();
+  const [currentPath, setCurrentPath] = useState(() => {
+    // Try to get from localStorage or default to '/'
+    return localStorage.getItem('currentRoute') || '/';
+  });
+
+  // Save to localStorage when path changes
+  useEffect(() => {
+    localStorage.setItem('currentRoute', currentPath);
+  }, [currentPath]);
+
+  const navigateTo = (path: string) => {
+    setCurrentPath(path);
+  };
+
   if (isLicensed === null) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -75,30 +153,11 @@ function Router() {
 
   if (isLicensed === true) {
     return (
-      <AppLayout>
-        <Switch>
-          <Route path="/" component={Home} />
-          <Route path="/pos" component={POS} />
-          <Route path="/damaged" component={DamagedStock} />
-          <Route path="/products" component={Products} />
-          <Route path="/sales" component={Sales} />
-          <Route path="/returns" component={Returns} />
-          <Route path="/item-details/:id/:mode" component={ItemDetails} />
-          <Route path="/purchases" component={Purchases} />
-          <Route path="/suppliers" component={Suppliers} />
-          <Route path="/net-profit" component={NetProfit} />
-          <Route path="/categories" component={Categories} />
-          <Route path="/transaction-logs" component={TransactionLogs} />
-          <Route path="/receipt-management" component={ReceiptManagement} />
-          <Route path="/expenses" component={Expenses} />
-          <Route path="/employees/:id" component={EmployeeDetails} />
-          <Route path="/employees" component={Employees} />
-          <Route path="/admin" component={AdminDashboard} />
-          <Route path="/settings" component={SettingsPage} />
-          <Route path="/profile" component={Profile} />
-          <Route component={isLicensed === true ? POS : NotFound} />
-        </Switch>
-      </AppLayout>
+      <NavigationContext.Provider value={{ currentPath, navigateTo }}>
+        <AppLayout>
+          <MainContent path={currentPath} />
+        </AppLayout>
+      </NavigationContext.Provider>
     );
   }
 

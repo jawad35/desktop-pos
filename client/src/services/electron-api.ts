@@ -97,7 +97,7 @@ type ElectronAPI = {
     getDataLocation: () => Promise<any>;
     backupData: () => Promise<any>;
     openDataFolder: () => Promise<void>;
-
+ wipeDatabase: () => Promise<any>;  // Add this line
     // License methods
     activateLicense: (licenseKey: string) => Promise<any>;
     checkLicense: () => Promise<any>;
@@ -293,6 +293,7 @@ const webAPI: ElectronAPI = {
     // In webAPI object, add:
     getProfitData: (startDate, endDate) => fetch(`/api/profit-dashboard?startDate=${startDate}&endDate=${endDate}`).then(r => r.json()),
     openDataFolder: () => Promise.resolve(),
+     wipeDatabase: async () => ({ success: false, error: 'Not available in web version' }),
     restartApp: async () => {
         console.log('Restart not available in web version');
         window.location.reload(); // Just reload the page for web
