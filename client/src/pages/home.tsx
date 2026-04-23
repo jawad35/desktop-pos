@@ -53,7 +53,7 @@ export default function Home() {
 
   useEffect(() => {
     setTitle("Dashboard");
-    setSubtitle("Welcome to POS Desktop App");
+    setSubtitle("Welcome to Brainsees POS");
   }, []);
 
   if (statsLoading) {

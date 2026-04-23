@@ -19,7 +19,7 @@
   },
 "build": {
     "appId": "com.desktop.pos",
-    "productName": "POS Desktop App",
+    "productName": "Brainsees POS",
     "copyright": "Copyright © 2024",
     "directories": {
       "output": "release",

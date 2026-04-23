@@ -138,7 +138,7 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>POS Desktop System</h1>
+        <h1>Brainsees POS</h1>
         <div className="header-controls">
           <button 
             className="btn-manage-products"

@@ -37,6 +37,7 @@ import {
 import { useHeader } from "@/contexts/HeaderContext";
 import { HanldePrintReceipt } from "@/utils/ReceiptGenerator";
 import { useAuth } from "@/hooks/useAuth";
+import { useNavigation } from "../App";
 
 interface CartItem {
     id: string;
@@ -74,7 +75,8 @@ export default function Orders() {
     const [returnFeeType, setReturnFeeType] = useState<"percentage" | "fixed">("percentage");
     const [returnFeeValue, setReturnFeeValue] = useState(0);
     const [searchedSale, setSearchedSale] = useState<any>(null);
-
+    // Add this with your other state variables (around line 100)
+    const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
     // Add this with your other state variables
     const [returnedItemsList, setReturnedItemsList] = useState<any[]>([]);
     // Add this state with your other useState declarations
@@ -97,7 +99,11 @@ export default function Orders() {
     const [fineType, setFineType] = useState<"percentage" | "fixed">("percentage");
     const [fineValue, setFineValue] = useState(0);
     const [fineReason, setFineReason] = useState("");
-
+    const { navigateTo } = useNavigation();
+    const removeFromCart = (id: string) => {
+        setCart(cart.filter(item => item.id !== id));
+        toast({ title: "Item Removed", description: "Item removed from cart" });
+    };
     // Enhanced filters and pagination
     const [filters, setFilters] = useState({
         search: "",
@@ -257,6 +263,187 @@ export default function Orders() {
             localStorage.removeItem('pos_cart');
         }
     }, [cart]); // Runs every time cart changes
+
+
+    // Add to your Orders.tsx
+    // Keyboard Shortcuts - Add this useEffect in your Orders component
+    // Keyboard Shortcuts - Updated with navigateTo
+    useEffect(() => {
+        const handleShortcuts = (e: KeyboardEvent) => {
+            // Don't trigger if typing in input fields
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'INPUT' ||
+                target.tagName === 'TEXTAREA' ||
+                target.isContentEditable) {
+                return;
+            }
+
+            const selectedItem = cart.find(item => item.id === selectedItemId);
+
+            // F1 - New Sale
+            if (e.key === 'F1') {
+                e.preventDefault();
+                setCart([]);
+                setSelectedItemId(null);
+                toast({ title: "New Sale", description: "Cart cleared" });
+                return;
+            }
+
+            // F2 - Process Payment
+            if (e.key === 'F2') {
+                e.preventDefault();
+                handleProcessPayment();
+                return;
+            }
+
+            // F3 - Print Receipt
+            if (e.key === 'F3') {
+                e.preventDefault();
+                handlePrintReceipt();
+                return;
+            }
+
+            // F4 - Search Product
+            if (e.key === 'F4') {
+                e.preventDefault();
+                const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement;
+                if (searchInput) {
+                    searchInput.focus();
+                }
+                return;
+            }
+
+            // F5 - Toggle Return Mode
+            if (e.key === 'F5') {
+                e.preventDefault();
+                handleReturnModeToggle();
+                return;
+            }
+
+            // F6 - Toggle Order Mode
+            if (e.key === 'F6') {
+                e.preventDefault();
+                handleOrderModeToggle();
+                return;
+            }
+
+            // F7 - Focus Customer Name
+            if (e.key === 'F7') {
+                e.preventDefault();
+                const customerNameInput = document.querySelector('input[placeholder*="Customer Name"]') as HTMLInputElement;
+                if (customerNameInput) {
+                    customerNameInput.focus();
+                }
+                return;
+            }
+
+            // F8 - Focus Customer Phone
+            if (e.key === 'F8') {
+                e.preventDefault();
+                const customerPhoneInput = document.querySelector('input[placeholder*="Customer Phone"]') as HTMLInputElement;
+                if (customerPhoneInput) {
+                    customerPhoneInput.focus();
+                }
+                return;
+            }
+
+            // Delete - Remove selected item
+            if (e.key === 'Delete' && selectedItem) {
+                e.preventDefault();
+                removeFromCart(selectedItem.id);
+                setSelectedItemId(null);
+                toast({ title: "Item Removed", description: `${selectedItem.name} removed from cart` });
+                return;
+            }
+
+            // Ctrl combinations
+            if (e.ctrlKey) {
+                switch (e.key) {
+                    case 'ArrowUp':
+                        if (selectedItem) {
+                            e.preventDefault();
+                            updateQuantity(selectedItem.id, 1);
+                        }
+                        break;
+                    case 'ArrowDown':
+                        if (selectedItem) {
+                            e.preventDefault();
+                            updateQuantity(selectedItem.id, -1);
+                        }
+                        break;
+                    case 'd':
+                        e.preventDefault();
+                        const discountInput = document.querySelector('input[placeholder*="Discount"]') as HTMLInputElement;
+                        if (discountInput) {
+                            discountInput.focus();
+                        }
+                        break;
+                    case 't':
+                        e.preventDefault();
+                        const taxInput = document.querySelector('input[placeholder*="Tax"]') as HTMLInputElement;
+                        if (taxInput) {
+                            taxInput.focus();
+                        }
+                        break;
+                    case 'r':
+                        e.preventDefault();
+                        // Use navigateTo from your navigation hook
+                        navigateTo('/returns');
+                        break;
+                    case 's':
+                        e.preventDefault();
+                        // Use navigateTo from your navigation hook
+                        navigateTo('/sales');
+                    case 'p':
+                        e.preventDefault();
+                        // Use navigateTo from your navigation hook
+                        navigateTo('/products');
+
+                }
+            }
+
+            // Alt combinations for navigation
+            if (e.altKey) {
+                e.preventDefault();
+                switch (e.key) {
+                    case '1':
+                        navigateTo('/');
+                        break;
+                    case '2':
+                        navigateTo('/pos');
+                        break;
+                    case '3':
+                        navigateTo('/sales');
+                        break;
+                    case '4':
+                        navigateTo('/returns');
+                        break;
+                    case '5':
+                        navigateTo('/products');
+                        break;
+                    case '6':
+                        navigateTo('/employees');
+                        break;
+                    case '7':
+                        navigateTo('/settings');
+                        break;
+                }
+            }
+
+            // Escape - Clear selection
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                setSelectedItemId(null);
+                // Close any open modals
+                setIsScannerOpen(false);
+                setIsBarcodeModalOpen(false);
+                setIsReceiptModalOpen(false);
+            }
+        };
+
+        window.addEventListener('keydown', handleShortcuts);
+        return () => window.removeEventListener('keydown', handleShortcuts);
+    }, [cart, selectedItemId, isReturnMode, isOrderMode]);
 
     const handleReturnItem = (item: CartItem) => {
         console.log("🔍 [RETURN] Moving item to return list:", {
@@ -759,9 +946,6 @@ export default function Orders() {
         });
     };
 
-    const removeFromCart = (id: string) => {
-        setCart(cart.filter(item => item.id !== id));
-    };
 
     const subtotal = cart.reduce((sum, item) => sum + item.total, 0);
 
@@ -1586,12 +1770,16 @@ export default function Orders() {
                                         cart.map((item) => {
                                             const isMaxQuantity = item.quantity >= item.availableStock;
                                             const isMinQuantity = item.quantity <= 1;
+                                            const isSelected = selectedItemId === item.id;
 
                                             return (
                                                 <div
                                                     key={item.id}
-                                                    className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 bg-muted/30 rounded-lg gap-3"
-                                                    data-testid={`cart-item-${item.id}`}
+                                                    className={`flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 rounded-lg gap-3 cursor-pointer transition-colors ${isSelected
+                                                        ? 'bg-primary/20 border-2 border-primary'
+                                                        : 'bg-muted/30 hover:bg-muted/50'
+                                                        }`}
+                                                    onClick={() => setSelectedItemId(item.id)}
                                                 >
                                                     {/* Product image */}
                                                     <div className="w-12 h-12 rounded-md overflow-hidden flex-shrink-0 bg-muted">
@@ -1608,7 +1796,7 @@ export default function Orders() {
                                                         )}
                                                     </div>
 
-                                                    {/* Product info - responsive */}
+                                                    {/* Product info */}
                                                     <div className="flex-1 min-w-0 w-full sm:w-auto">
                                                         <p className="font-medium text-sm truncate">{item.name}</p>
                                                         <p className="text-xs text-muted-foreground">
@@ -1619,13 +1807,16 @@ export default function Orders() {
                                                         </p>
                                                     </div>
 
-                                                    {/* Quantity controls - responsive */}
+                                                    {/* Quantity controls and actions */}
                                                     <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-3">
                                                         <div className="flex items-center space-x-2">
                                                             <Button
                                                                 size="sm"
                                                                 variant="outline"
-                                                                onClick={() => updateQuantity(item.id, -1)}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    updateQuantity(item.id, -1);
+                                                                }}
                                                                 className="h-7 w-7 p-0"
                                                                 disabled={isMinQuantity}
                                                             >
@@ -1637,7 +1828,10 @@ export default function Orders() {
                                                             <Button
                                                                 size="sm"
                                                                 variant="outline"
-                                                                onClick={() => updateQuantity(item.id, 1)}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    updateQuantity(item.id, 1);
+                                                                }}
                                                                 className="h-7 w-7 p-0"
                                                                 disabled={isMaxQuantity}
                                                             >
@@ -1650,12 +1844,31 @@ export default function Orders() {
                                                             {formatPKR(item.total)}
                                                         </p>
 
-                                                        {/* Return button */}
+                                                        {/* Delete button - always visible in sale mode */}
+                                                        {!isReturnMode && (
+                                                            <Button
+                                                                size="sm"
+                                                                variant="ghost"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    removeFromCart(item.id);
+                                                                }}
+                                                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                                title="Remove item"
+                                                            >
+                                                                <X className="h-4 w-4" />
+                                                            </Button>
+                                                        )}
+
+                                                        {/* Return button - only in return mode */}
                                                         {isReturnMode && searchedSale?.return_status !== 'full' && (
                                                             <Button
                                                                 size="sm"
                                                                 variant="ghost"
-                                                                onClick={() => handleReturnItem(item)}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleReturnItem(item);
+                                                                }}
                                                                 className="text-destructive hover:text-destructive"
                                                                 title="Return this item"
                                                                 disabled={searchedSale?.return_status === 'full'}

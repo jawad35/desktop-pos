@@ -8,13 +8,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { formatPKR } from "@/lib/currency";
 import { format } from "date-fns";
-import { Eye, Download, ChevronRight, ChevronLeft, RotateCcw } from "lucide-react";
+import { Eye, Download, ChevronRight, ChevronLeft, RotateCcw, Keyboard } from "lucide-react";
 import { useHeader } from "@/contexts/HeaderContext";
 import { useLocation } from "wouter";
 import { getPaymentMethodColor } from "@/utils/GetPaymentMethodColor";
 import { api } from "../services/electron-api";
 import { useToast } from "@/hooks/use-toast";
 import { useLoginType } from "@/hooks/useLoginType";
+import { KeyboardShortcutsModal } from "../components/modals/KeyboardShortcutsModal";
 
 // Storage keys
 const STORAGE_KEYS = {
@@ -22,6 +23,15 @@ const STORAGE_KEYS = {
   SALES_FILTERS: 'sales_filters',
   SALES_SCROLL_POSITION: 'sales_scroll_position'
 };
+
+// Keyboard shortcuts for Sales page
+const shortcuts = [
+  { key: "Ctrl + E", description: "Export Sales to CSV" },
+  { key: "Ctrl + C", description: "Clear All Filters" },
+  { key: "Ctrl + F", description: "Focus Search Bar" },
+  { key: "←", description: "Previous Page" },
+  { key: "→", description: "Next Page" },
+];
 
 export default function Sales() {
   const pageSize = 50;
@@ -70,7 +80,7 @@ export default function Sales() {
   const mainContentRef = useRef<HTMLDivElement>(null);
   const isFirstLoadRef = useRef(true);
   const { loginType } = useLoginType();
-
+  const [showShortcuts, setShowShortcuts] = useState(false);
   // Fetch data
   const { isLoading, refetch } = useQuery<any[]>({
     queryKey: ["sales", location],
@@ -448,6 +458,69 @@ export default function Sales() {
 
   const { setTitle, setSubtitle } = useHeader();
 
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleShortcuts = (e: KeyboardEvent) => {
+      // Don't trigger if typing in input fields
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable) {
+        return;
+      }
+
+      // Ctrl + E - Export
+      if (e.ctrlKey && e.key === 'e') {
+        e.preventDefault();
+        e.stopPropagation();
+        handleExport();
+        return;
+      }
+
+      // Ctrl + C - Clear Filters
+      if (e.ctrlKey && e.key === 'c') {
+        e.preventDefault();
+        e.stopPropagation();
+        handleResetFilters();
+        return;
+      }
+
+      // Ctrl + F - Focus Search
+      if (e.ctrlKey && e.key === 'f') {
+        e.preventDefault();
+        e.stopPropagation();
+        const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement;
+        if (searchInput) {
+          searchInput.focus();
+        }
+        return;
+      }
+
+      // Arrow Left - Previous Page
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (currentPage > 1) {
+          setCurrentPage(p => p - 1);
+        }
+        return;
+      }
+
+      // Arrow Right - Next Page
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (currentPage < totalPages) {
+          setCurrentPage(p => p + 1);
+        }
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleShortcuts);
+    return () => window.removeEventListener('keydown', handleShortcuts);
+  }, [currentPage, totalPages]);
+
   useEffect(() => {
     setTitle("Sales");
     setSubtitle("View and manage all sales transactions");
@@ -519,20 +592,37 @@ export default function Sales() {
         </div>
 
         <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between flex-wrap gap-4">
-              <CardTitle>Sales History</CardTitle>
-              <div className="flex space-x-2">
-                <Button onClick={handleResetFilters} variant="outline" size="sm">
-                  Reset All
-                </Button>
-                <Button onClick={handleExport} variant="outline">
-                  <Download className="h-4 w-4 mr-2" />
-                  Export CSV
-                </Button>
-              </div>
-            </div>
-          </CardHeader>
+        <CardHeader>
+    <div className="flex items-center justify-between flex-wrap gap-4">
+        <div className="flex items-center gap-2">
+            <CardTitle>Sales History</CardTitle>
+            <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowShortcuts(true)}
+                className="h-8 w-8"
+                title="Keyboard Shortcuts"
+            >
+                <Keyboard className="h-4 w-4" />
+            </Button>
+            <KeyboardShortcutsModal
+    open={showShortcuts}
+    onOpenChange={setShowShortcuts}
+    title="Sales Page Shortcuts"
+    shortcuts={shortcuts}
+/>
+        </div>
+        <div className="flex space-x-2">
+            <Button onClick={handleResetFilters} variant="outline" size="sm">
+                Reset All
+            </Button>
+            <Button onClick={handleExport} variant="outline">
+                <Download className="h-4 w-4 mr-2" />
+                Export CSV
+            </Button>
+        </div>
+    </div>
+</CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
               <Input

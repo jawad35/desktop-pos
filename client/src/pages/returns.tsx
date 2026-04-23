@@ -7,24 +7,31 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { formatPKR } from "@/lib/currency";
 import { format } from "date-fns";
-import { Eye, Download, ChevronRight, ChevronLeft, AlertTriangle } from "lucide-react";
+import { Eye, Download, ChevronRight, ChevronLeft, AlertTriangle, Keyboard } from "lucide-react";
 import { useHeader } from "@/contexts/HeaderContext";
 import { useLocation } from "wouter";
 import { getPaymentMethodColor } from "@/utils/GetPaymentMethodColor";
 import { api } from "../services/electron-api";
 import { useToast } from "@/hooks/use-toast";
 
+import { KeyboardShortcutsModal } from "../components/modals/KeyboardShortcutsModal";
 // Storage keys
 const STORAGE_KEYS = {
-  RETURNS_PAGE: 'returns_current_page',
-  RETURNS_FILTERS: 'returns_filters',
-  RETURNS_SCROLL_POSITION: 'returns_scroll_position'
+    RETURNS_PAGE: 'returns_current_page',
+    RETURNS_FILTERS: 'returns_filters',
+    RETURNS_SCROLL_POSITION: 'returns_scroll_position'
 };
-
+const shortcuts = [
+    { key: "Ctrl + E", description: "Export Returns to CSV" },
+    { key: "Ctrl + C", description: "Clear All Filters" },
+    { key: "Ctrl + F", description: "Focus Search Bar" },
+    { key: "←", description: "Previous Page" },
+    { key: "→", description: "Next Page" },
+];
 export default function Returns() {
     const pageSize = 50; // Changed to 20 for testing
     const [location] = useLocation();
-    
+
     // Load saved state
     const loadSavedPage = () => {
         try {
@@ -50,7 +57,7 @@ export default function Returns() {
                     search: parsed.search || "",
                 };
             }
-        } catch (error) {}
+        } catch (error) { }
         return {
             startDate: "",
             endDate: "",
@@ -68,7 +75,7 @@ export default function Returns() {
     const mainContentRef = useRef<HTMLDivElement>(null);
     const isFirstLoadRef = useRef(true);
     const isMountedRef = useRef(true);
-
+    const [showShortcuts, setShowShortcuts] = useState(false);
     // Fetch data
     const { isLoading, refetch, data } = useQuery<any[]>({
         queryKey: ["returns", location], // Add location to trigger refetch on navigation
@@ -88,13 +95,13 @@ export default function Returns() {
 
             // Sort by created_at descending
             allReturns.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-            
+
             console.log(`Loaded ${allReturns.length} returns`);
             setAllReturnsData(allReturns);
-            
+
             // Force re-render after data is set
             setRenderKey(prev => prev + 1);
-            
+
             return allReturns;
         },
         refetchOnMount: true,
@@ -108,12 +115,12 @@ export default function Returns() {
     const filteredData = useMemo(() => {
         console.log("=== COMPUTING FILTERED DATA ===");
         console.log(`All returns data length: ${allReturnsData.length}`);
-        
+
         if (allReturnsData.length === 0) {
             console.log("No data to filter");
             return [];
         }
-        
+
         let filtered = [...allReturnsData];
 
         if (filters.search) {
@@ -156,46 +163,47 @@ export default function Returns() {
         console.log("=== COMPUTING PAGINATED DATA ===");
         console.log(`Filtered data length: ${filteredData.length}`);
         console.log(`Current page: ${currentPage}`);
-        
+
         if (filteredData.length === 0) {
             console.log("No filtered data to paginate");
             return [];
         }
-        
+
         const start = (currentPage - 1) * pageSize;
         const end = start + pageSize;
         const paginated = filteredData.slice(start, end);
         console.log(`Pagination: Page ${currentPage}, showing records ${start + 1} to ${Math.min(end, filteredData.length)}`);
         console.log(`Paginated data count: ${paginated.length}`);
-        
+
         return paginated;
     }, [filteredData, currentPage]);
+
 
     // Validate and adjust current page when filtered data changes
     useEffect(() => {
         console.log("=== PAGE VALIDATION EFFECT ===");
         console.log(`Filtered data length: ${filteredData.length}`);
         console.log(`Current page: ${currentPage}`);
-        
+
         if (filteredData.length > 0) {
             const totalPages = Math.ceil(filteredData.length / pageSize);
             console.log(`Total pages: ${totalPages}`);
-            
+
             // On first load, use saved page
             if (isFirstLoadRef.current) {
                 const savedPage = loadSavedPage();
                 let validPage = savedPage;
                 if (validPage > totalPages) validPage = totalPages;
                 if (validPage < 1) validPage = 1;
-                
+
                 console.log(`First load: saved page = ${savedPage}, valid page = ${validPage}`);
-                
+
                 if (validPage !== currentPage) {
                     console.log(`Adjusting page from ${currentPage} to ${validPage}`);
                     setCurrentPage(validPage);
                 }
                 isFirstLoadRef.current = false;
-            } 
+            }
             // If current page is out of bounds, adjust it
             else if (currentPage > totalPages) {
                 console.log(`Page ${currentPage} out of bounds, adjusting to ${totalPages}`);
@@ -228,13 +236,13 @@ export default function Returns() {
         console.log(`Current page state: ${currentPage}`);
         console.log(`Filtered data length: ${filteredData.length}`);
         console.log(`Paginated data length: ${paginatedData.length}`);
-        
+
         // Check if we have data but table is empty
         if (filteredData.length > 0 && paginatedData.length === 0 && !isLoading) {
             console.log("WARNING: Data exists but paginated data is empty! Forcing re-render...");
             setRenderKey(prev => prev + 1);
         }
-        
+
         return () => {
             console.log("Component unmounting");
         };
@@ -304,6 +312,76 @@ export default function Returns() {
         }
     };
 
+    const totalPages = Math.ceil(filteredData.length / pageSize);
+    const startIndex = filteredData.length > 0 ? (currentPage - 1) * pageSize + 1 : 0;
+    const endIndex = Math.min(currentPage * pageSize, filteredData.length);
+
+    // Keyboard Shortcuts - Updated with better arrow key handling
+    useEffect(() => {
+        const handleShortcuts = (e: KeyboardEvent) => {
+            // Don't trigger if typing in input fields
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'INPUT' ||
+                target.tagName === 'TEXTAREA' ||
+                target.isContentEditable) {
+                return;
+            }
+
+            // Ctrl + E - Export
+            if (e.ctrlKey && e.key === 'e') {
+                e.preventDefault();
+                e.stopPropagation();
+                handleExport();
+                return;
+            }
+
+            // Ctrl + C - Clear Filters
+            if (e.ctrlKey && e.key === 'c') {
+                e.preventDefault();
+                e.stopPropagation();
+                setFilters({ startDate: "", endDate: "", paymentMethod: "", search: "" });
+                setCurrentPage(1);
+                return;
+            }
+
+            // Ctrl + F - Focus Search
+            if (e.ctrlKey && e.key === 'f') {
+                e.preventDefault();
+                e.stopPropagation();
+                const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement;
+                if (searchInput) {
+                    searchInput.focus();
+                }
+                return;
+            }
+
+            // Arrow Left - Previous Page
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                e.stopPropagation();
+                if (currentPage > 1) {
+                    setCurrentPage(p => p - 1);
+                    console.log('Arrow Left pressed, going to page:', currentPage - 1);
+                }
+                return;
+            }
+
+            // Arrow Right - Next Page
+            if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                e.stopPropagation();
+                if (currentPage < totalPages) {
+                    setCurrentPage(p => p + 1);
+                    console.log('Arrow Right pressed, going to page:', currentPage + 1);
+                }
+                return;
+            }
+        };
+
+        window.addEventListener('keydown', handleShortcuts);
+        return () => window.removeEventListener('keydown', handleShortcuts);
+    }, [currentPage, totalPages]); // Add handleExport if needed
+
     const handleViewDetails = (saleId: string) => {
         const state = "returns";
         navigate(`/item-details/${saleId}/${state}`);
@@ -328,9 +406,7 @@ export default function Returns() {
         setCurrentPage(1); // Reset to first page when filters change
     };
 
-    const totalPages = Math.ceil(filteredData.length / pageSize);
-    const startIndex = filteredData.length > 0 ? (currentPage - 1) * pageSize + 1 : 0;
-    const endIndex = Math.min(currentPage * pageSize, filteredData.length);
+
 
     // Calculate summary stats
     const totalReturnsAmount = filteredData.reduce((sum: number, returnItem: any) => sum + (parseFloat(returnItem.total) || 0), 0);
@@ -355,7 +431,7 @@ export default function Returns() {
 
     return (
         <div className="flex-1 flex flex-col overflow-hidden" key={renderKey}>
-            <main 
+            <main
                 ref={mainContentRef}
                 className="flex-1 overflow-auto p-6"
                 onScroll={handleScroll}
@@ -436,9 +512,20 @@ export default function Returns() {
                 <Card>
                     <CardHeader>
                         <div className="flex items-center justify-between flex-wrap gap-4">
-                            <CardTitle>Returns History</CardTitle>
+                            <div className="flex items-center justify-between">
+                                <CardTitle>Returns History</CardTitle>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="ml-2"
+                                    onClick={() => setShowShortcuts(true)}
+                                >
+                                    <Keyboard className="h-4 w-4" />
+                                </Button>
+                            </div>
+
                             <div className="flex space-x-2">
-                                <Button 
+                                <Button
                                     onClick={() => {
                                         console.log("Reset button clicked");
                                         localStorage.removeItem(STORAGE_KEYS.RETURNS_PAGE);
@@ -450,8 +537,8 @@ export default function Returns() {
                                         setRenderKey(prev => prev + 1);
                                         toast({ title: "Reset", description: "All filters and pagination have been reset" });
                                         refetch();
-                                    }} 
-                                    variant="outline" 
+                                    }}
+                                    variant="outline"
                                     size="sm"
                                 >
                                     Reset All
@@ -471,6 +558,14 @@ export default function Returns() {
                                 value={filters.search}
                                 onChange={(e) => handleFilterChange('search', e.target.value)}
                             />
+
+                            <KeyboardShortcutsModal
+                                open={showShortcuts}
+                                onOpenChange={setShowShortcuts}
+                                title="Returns Page Shortcuts"
+                                shortcuts={shortcuts}
+                            />
+
                             <Input
                                 type="date"
                                 placeholder="Start Date"
@@ -504,9 +599,9 @@ export default function Returns() {
 
                         {/* Debug info */}
                         <div className="mb-4 text-xs text-muted-foreground bg-muted p-2 rounded">
-                            Debug: Page {currentPage} of {totalPages} | 
-                            Filtered: {filteredData.length} | 
-                            Paginated: {paginatedData.length} | 
+                            Debug: Page {currentPage} of {totalPages} |
+                            Filtered: {filteredData.length} |
+                            Paginated: {paginatedData.length} |
                             Loading: {isLoading ? "Yes" : "No"}
                         </div>
 
@@ -590,17 +685,17 @@ export default function Returns() {
                                                                         <span className="text-muted-foreground">-</span>
                                                                     )}
                                                                 </div>
-                                                             </td>
+                                                            </td>
                                                             <td className="p-3">
                                                                 <Badge className={getPaymentMethodColor(returnItem.payment_method)} variant="secondary">
                                                                     {returnItem.payment_method?.toUpperCase()}
                                                                 </Badge>
-                                                             </td>
+                                                            </td>
                                                             <td className="p-3">
                                                                 <Badge className={getStatusColor(returnItem.payment_status)} variant="secondary">
                                                                     {returnItem.payment_status?.toUpperCase()}
                                                                 </Badge>
-                                                             </td>
+                                                            </td>
                                                             <td className="p-3">
                                                                 <Button
                                                                     size="sm"
@@ -609,7 +704,7 @@ export default function Returns() {
                                                                 >
                                                                     <Eye className="h-4 w-4" />
                                                                 </Button>
-                                                             </td>
+                                                            </td>
                                                         </tr>
                                                     ))
                                                 ) : (
@@ -655,7 +750,7 @@ export default function Returns() {
                                                     } else {
                                                         pageNum = currentPage - 2 + i;
                                                     }
-                                                    
+
                                                     return (
                                                         <Button
                                                             key={pageNum}
