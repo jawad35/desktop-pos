@@ -142,11 +142,11 @@ export default function Products() {
   const [barcodeValue, setBarcodeValue] = useState("");
   const [barcodeQuantity, setBarcodeQuantity] = useState(1);
   const [generatedBarcodes, setGeneratedBarcodes] = useState<string[]>([]);
-
+  const [categoryTreeOpen, setCategoryTreeOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false);
   const [importUrl, setImportUrl] = useState("");
   const [importFile, setImportFile] = useState<File | null>(null);
-
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
   const { toast } = useToast();
   const { setTitle, setSubtitle } = useHeader();
   const mainContentRef = useRef<HTMLDivElement>(null);
@@ -435,7 +435,94 @@ export default function Products() {
     return () => window.removeEventListener('keydown', handleShortcuts);
   }, [currentPage, totalPages]);
 
-  
+  // Add this interface at the top
+  interface CategoryNode {
+    id: string;
+    name: string;
+    parent_id: string | null;
+    children: CategoryNode[];
+  }
+
+  // Helper function to build category tree
+  const buildCategoryTree = (categories: Category[]): CategoryNode[] => {
+    const categoryMap = new Map<string, CategoryNode>();
+    const roots: CategoryNode[] = [];
+
+    // First, create all nodes
+    categories.forEach(cat => {
+      categoryMap.set(cat.id, {
+        id: cat.id,
+        name: cat.name,
+        parent_id: cat.parent_id,
+        children: []
+      });
+    });
+
+    // Then build the tree
+    categories.forEach(cat => {
+      const node = categoryMap.get(cat.id);
+      if (node && cat.parent_id && categoryMap.has(cat.parent_id)) {
+        const parent = categoryMap.get(cat.parent_id);
+        parent?.children.push(node);
+      } else if (node) {
+        roots.push(node);
+      }
+    });
+
+    return roots;
+  };
+
+  // Recursive component to render category tree
+  const CategoryTreeNode = ({ node, level = 0, selectedId, onSelect }: {
+    node: CategoryNode;
+    level?: number;
+    selectedId: string;
+    onSelect: (id: string) => void;
+  }) => {
+    const [isOpen, setIsOpen] = useState(true);
+    const hasChildren = node.children.length > 0;
+
+    return (
+      <div className="select-none">
+        <div
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedId === node.id
+            ? 'bg-primary text-primary-foreground'
+            : 'hover:bg-muted'
+            }`}
+          style={{ paddingLeft: `${level * 20 + 12}px` }}
+          onClick={() => onSelect(node.id)}
+        >
+          {hasChildren && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsOpen(!isOpen);
+              }}
+              className="w-4 h-4 flex items-center justify-center"
+            >
+              {isOpen ? '▼' : '▶'}
+            </button>
+          )}
+          {!hasChildren && <div className="w-4" />}
+          <span className="text-sm">{node.name}</span>
+        </div>
+        {hasChildren && isOpen && (
+          <div className="ml-4">
+            {node.children.map(child => (
+              <CategoryTreeNode
+                key={child.id}
+                node={child}
+                level={level + 1}
+                selectedId={selectedId}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productFormSchema),
@@ -918,15 +1005,58 @@ export default function Products() {
                         <div className="space-y-4">
                           <h3 className="text-lg font-semibold border-b pb-2">Classification</h3>
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {/* Category - Hierarchical Selector */}
                             <FormField control={form.control} name="categoryId" render={({ field }) => (
-                              <FormItem><FormLabel>Category</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger></FormControl><SelectContent>{categories.map((c) => (<SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>))}</SelectContent></Select><FormMessage /></FormItem>
+                              <FormItem>
+                                <FormLabel>Category</FormLabel>
+                                <div className="relative">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="w-full justify-between"
+                                    onClick={() => setCategoryDropdownOpen(!categoryDropdownOpen)}
+                                  >
+                                    {categories.find(c => c.id === field.value)?.name || 'Select category'}
+                                    <ChevronRight className={`h-4 w-4 transition-transform ${categoryDropdownOpen ? 'rotate-90' : ''}`} />
+                                  </Button>
+
+                                  {categoryDropdownOpen && (
+                                    <div className="absolute z-50 mt-1 w-full bg-card border rounded-lg shadow-lg p-2 max-h-60 overflow-y-auto">
+                                      <div
+                                        className={`px-3 py-2 rounded-lg cursor-pointer ${!field.value ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+                                        onClick={() => {
+                                          field.onChange("");
+                                          setCategoryDropdownOpen(false);
+                                        }}
+                                      >
+                                        <span className="text-sm">None</span>
+                                      </div>
+                                      {buildCategoryTree(categories).map(root => (
+                                        <CategoryTreeNode
+                                          key={root.id}
+                                          node={root}
+                                          selectedId={field.value || ""}
+                                          onSelect={(id) => {
+                                            field.onChange(id);
+                                            setCategoryDropdownOpen(false);
+                                          }}
+                                        />
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                                <FormMessage />
+                              </FormItem>
                             )} />
+
                             <FormField control={form.control} name="brandId" render={({ field }) => (
                               <FormItem><FormLabel>Brand</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Select brand" /></SelectTrigger></FormControl><SelectContent>{brands.map((b) => (<SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>))}</SelectContent></Select><FormMessage /></FormItem>
                             )} />
+
                             <FormField control={form.control} name="supplierId" render={({ field }) => (
                               <FormItem><FormLabel>Supplier</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Select supplier" /></SelectTrigger></FormControl><SelectContent>{suppliers.map((s) => (<SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>))}</SelectContent></Select><FormMessage /></FormItem>
                             )} />
+
                             <FormField control={form.control} name="productType" render={({ field }) => (
                               <FormItem><FormLabel>Product Type</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger></FormControl><SelectContent><SelectItem value="physical">Physical</SelectItem><SelectItem value="digital">Digital</SelectItem><SelectItem value="service">Service</SelectItem></SelectContent></Select><FormMessage /></FormItem>
                             )} />
@@ -1011,7 +1141,41 @@ export default function Products() {
             {/* Filters */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
               <Input placeholder="Search products... (Ctrl+F)" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} />
-              <Select value={filters.categoryId || "all"} onValueChange={(v) => setFilters({ ...filters, categoryId: v === "all" ? "" : v })}><SelectTrigger><SelectValue placeholder="All Categories" /></SelectTrigger><SelectContent><SelectItem value="all">All Categories</SelectItem>{categories.map((c) => (<SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>))}</SelectContent></Select>
+              <div className="relative">
+                <Button
+                  variant="outline"
+                  className="w-full justify-between"
+                  onClick={() => setCategoryTreeOpen(!categoryTreeOpen)}
+                >
+                  {categories.find(c => c.id === filters.categoryId)?.name || 'All Categories'}
+                  <ChevronRight className={`h-4 w-4 transition-transform ${categoryTreeOpen ? 'rotate-90' : ''}`} />
+                </Button>
+
+                {categoryTreeOpen && (
+                  <div className="absolute z-50 mt-1 w-full bg-card border rounded-lg shadow-lg p-2 max-h-80 overflow-y-auto">
+                    <div
+                      className={`px-3 py-2 rounded-lg cursor-pointer ${!filters.categoryId ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+                      onClick={() => {
+                        setFilters({ ...filters, categoryId: "" });
+                        setCategoryTreeOpen(false);
+                      }}
+                    >
+                      <span className="text-sm">All Categories</span>
+                    </div>
+                    {buildCategoryTree(categories).map(root => (
+                      <CategoryTreeNode
+                        key={root.id}
+                        node={root}
+                        selectedId={filters.categoryId || ""}
+                        onSelect={(id) => {
+                          setFilters({ ...filters, categoryId: id });
+                          setCategoryTreeOpen(false);
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
               <Select value={filters.brandId || "all"} onValueChange={(v) => setFilters({ ...filters, brandId: v === "all" ? "" : v })}><SelectTrigger><SelectValue placeholder="All Brands" /></SelectTrigger><SelectContent><SelectItem value="all">All Brands</SelectItem>{brands.map((b) => (<SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>))}</SelectContent></Select>
               <Select value={filters.supplierId || "all"} onValueChange={(v) => setFilters({ ...filters, supplierId: v === "all" ? "" : v })}><SelectTrigger><SelectValue placeholder="All Suppliers" /></SelectTrigger><SelectContent><SelectItem value="all">All Suppliers</SelectItem>{suppliers.map((s) => (<SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>))}</SelectContent></Select>
               <Select value={filters.productType || "all"} onValueChange={(v) => setFilters({ ...filters, productType: v === "all" ? "" : v })}><SelectTrigger><SelectValue placeholder="All Types" /></SelectTrigger><SelectContent><SelectItem value="all">All Types</SelectItem><SelectItem value="physical">Physical</SelectItem><SelectItem value="digital">Digital</SelectItem><SelectItem value="service">Service</SelectItem></SelectContent></Select>

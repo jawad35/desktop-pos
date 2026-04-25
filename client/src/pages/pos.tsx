@@ -96,10 +96,95 @@ export default function Orders() {
     // Add this with your other state variables
     const [reducedItemsMap, setReducedItemsMap] = useState<Map<string, { originalQuantity: number; returnQuantity: number }>>(new Map());
     // Add these with your other state variables
-    const [fineEnabled, setFineEnabled] = useState(false);
-    const [fineType, setFineType] = useState<"percentage" | "fixed">("percentage");
-    const [fineValue, setFineValue] = useState(0);
-    const [fineReason, setFineReason] = useState("");
+    // Add these imports
+
+    // Add this state
+    const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+
+    // Add these helper functions (add before your component)
+    interface CategoryNode {
+        id: string;
+        name: string;
+        parent_id: string | null;
+        children: CategoryNode[];
+    }
+
+    const buildCategoryTree = (categories: any[]): CategoryNode[] => {
+        const categoryMap = new Map<string, CategoryNode>();
+        const roots: CategoryNode[] = [];
+
+        categories.forEach(cat => {
+            categoryMap.set(cat.id, {
+                id: cat.id,
+                name: cat.name,
+                parent_id: cat.parent_id,
+                children: []
+            });
+        });
+
+        categories.forEach(cat => {
+            const node = categoryMap.get(cat.id);
+            if (node && cat.parent_id && categoryMap.has(cat.parent_id)) {
+                const parent = categoryMap.get(cat.parent_id);
+                parent?.children.push(node);
+            } else if (node) {
+                roots.push(node);
+            }
+        });
+
+        return roots;
+    };
+
+    const CategoryTreeNode = ({ node, level = 0, selectedId, onSelect }: {
+        node: CategoryNode;
+        level?: number;
+        selectedId: string;
+        onSelect: (id: string) => void;
+    }) => {
+        const [isOpen, setIsOpen] = useState(true);
+        const hasChildren = node.children.length > 0;
+
+        return (
+            <div className="select-none">
+                <div
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedId === node.id
+                        ? 'bg-primary text-primary-foreground'
+                        : 'hover:bg-muted'
+                        }`}
+                    style={{ paddingLeft: `${level * 20 + 12}px` }}
+                    onClick={() => onSelect(node.id)}
+                >
+                    {hasChildren && (
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsOpen(!isOpen);
+                            }}
+                            className="w-4 h-4 flex items-center justify-center"
+                        >
+                            {isOpen ? '▼' : '▶'}
+                        </button>
+                    )}
+                    {!hasChildren && <div className="w-4" />}
+                    <span className="text-sm">{node.name}</span>
+                </div>
+                {hasChildren && isOpen && (
+                    <div className="ml-4">
+                        {node.children.map(child => (
+                            <CategoryTreeNode
+                                key={child.id}
+                                node={child}
+                                level={level + 1}
+                                selectedId={selectedId}
+                                onSelect={onSelect}
+                            />
+                        ))}
+                    </div>
+                )}
+            </div>
+        );
+    };
     const { navigateTo } = useNavigation();
     const removeFromCart = (id: string) => {
         setCart(cart.filter(item => item.id !== id));
@@ -1442,22 +1527,42 @@ export default function Orders() {
                         {/* Enhanced Filters */}
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                             {/* Category Filter */}
-                            <Select
-                                value={filters.categoryId}
-                                onValueChange={(value) => setFilters({ ...filters, categoryId: value === "all" ? "" : value })}
-                            >
-                                <SelectTrigger>
-                                    <SelectValue placeholder="All Categories" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All Categories</SelectItem>
-                                    {categories.map((category: any) => (
-                                        <SelectItem key={category.id} value={category.id}>
-                                            {category.name}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                            {/* Category Filter - Hierarchical */}
+                            <div className="relative">
+                                <Button
+                                    variant="outline"
+                                    className="w-full justify-between"
+                                    onClick={() => setCategoryDropdownOpen(!categoryDropdownOpen)}
+                                >
+                                    {categories.find(c => c.id === filters.categoryId)?.name || 'All Categories'}
+                                    <ChevronRight className={`h-4 w-4 transition-transform ${categoryDropdownOpen ? 'rotate-90' : ''}`} />
+                                </Button>
+
+                                {categoryDropdownOpen && (
+                                    <div className="absolute z-50 mt-1 w-full bg-card border rounded-lg shadow-lg p-2 max-h-80 overflow-y-auto">
+                                        <div
+                                            className={`px-3 py-2 rounded-lg cursor-pointer ${!filters.categoryId ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+                                            onClick={() => {
+                                                setFilters({ ...filters, categoryId: "" });
+                                                setCategoryDropdownOpen(false);
+                                            }}
+                                        >
+                                            <span className="text-sm">All Categories</span>
+                                        </div>
+                                        {buildCategoryTree(categories).map(root => (
+                                            <CategoryTreeNode
+                                                key={root.id}
+                                                node={root}
+                                                selectedId={filters.categoryId || ""}
+                                                onSelect={(id) => {
+                                                    setFilters({ ...filters, categoryId: id });
+                                                    setCategoryDropdownOpen(false);
+                                                }}
+                                            />
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
 
                             {/* Brand Filter */}
                             <Select
