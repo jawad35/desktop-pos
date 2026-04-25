@@ -1,18 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { DataTable } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { formatPKR } from "@/lib/currency";
 import { format } from "date-fns";
-import { Users, Plus, Eye, Edit, Trash2, Phone, Banknote, Share } from "lucide-react";
+import { Users, Plus, Eye, Edit, Trash2, Phone, Banknote, Share, Keyboard, ChevronLeft, ChevronRight } from "lucide-react";
 import { useHeader } from "@/contexts/HeaderContext";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "../../services/electron-api";
+import { KeyboardShortcutsModal } from "../../components/modals/KeyboardShortcutsModal";
+import { useLocation } from "wouter";
+
+// Storage keys
+const STORAGE_KEYS = {
+    EMPLOYEES_PAGE: 'employees_current_page',
+    EMPLOYEES_FILTERS: 'employees_filters',
+    EMPLOYEES_SCROLL_POSITION: 'employees_scroll_position'
+};
 
 interface Employee {
     id: string;
@@ -29,86 +37,269 @@ interface Employee {
 }
 
 export default function Employees() {
-    const [filters, setFilters] = useState({
-        search: "",
-        employeeType: "",
-        shift: "",
-        status: "",
-    });
+    const pageSize = 50;
+    const [location] = useLocation();
     const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<any>(null);
     const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
     const [employeeToDelete, setEmployeeToDelete] = useState<string | null>(null);
+    const [showShortcuts, setShowShortcuts] = useState(false);
     const { toast } = useToast();
 
-    const { data: employees = [], isLoading, refetch } = useQuery<any[]>({
-        queryKey: ["employees", filters.search, filters.employeeType, filters.shift, filters.status],
+    // Load saved state
+    const loadSavedPage = () => {
+        try {
+            const savedPage = localStorage.getItem(STORAGE_KEYS.EMPLOYEES_PAGE);
+            const page = savedPage ? parseInt(savedPage, 10) : 1;
+            return isNaN(page) ? 1 : Math.max(1, page);
+        } catch (error) {
+            return 1;
+        }
+    };
+
+    const loadSavedFilters = () => {
+        try {
+            const savedFilters = localStorage.getItem(STORAGE_KEYS.EMPLOYEES_FILTERS);
+            if (savedFilters) {
+                const parsed = JSON.parse(savedFilters);
+                return {
+                    search: parsed.search || "",
+                    employeeType: parsed.employeeType || "",
+                    shift: parsed.shift || "",
+                    status: parsed.status || "",
+                };
+            }
+        } catch (error) { }
+        return {
+            search: "",
+            employeeType: "",
+            shift: "",
+            status: "",
+        };
+    };
+
+    const [filters, setFilters] = useState(loadSavedFilters);
+    const [currentPage, setCurrentPage] = useState(loadSavedPage);
+    const [allEmployeesData, setAllEmployeesData] = useState<Employee[]>([]);
+    const [renderKey, setRenderKey] = useState(0);
+
+    const mainContentRef = useRef<HTMLDivElement>(null);
+    const isFirstLoadRef = useRef(true);
+
+    // Fetch employees
+    const { isLoading, refetch } = useQuery<Employee[]>({
+        queryKey: ["employees", location],
         queryFn: async () => {
-            // Send filters with correct parameter names
-            const filterParams: any = {};
+            const result = await api.getEmployees();
+            let allEmployees: Employee[] = [];
 
-            if (filters.search) filterParams.search = filters.search;
-            if (filters.employeeType && filters.employeeType !== 'all') filterParams.employeeType = filters.employeeType;
-            if (filters.shift && filters.shift !== 'all') filterParams.shift = filters.shift;
-            if (filters.status && filters.status !== 'all') filterParams.status = filters.status;
+            if (Array.isArray(result)) {
+                allEmployees = result;
+            } else if (result?.success && Array.isArray(result.data)) {
+                allEmployees = result.data;
+            }
 
-            console.log('Sending filters to API:', filterParams);
-            const result = await api.getEmployees(filterParams);
-            console.log('API response:', result);
-
-            if (Array.isArray(result)) return result;
-            if (result?.success && Array.isArray(result.data)) return result.data;
-            return [];
+            allEmployees.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            setAllEmployeesData(allEmployees);
+            setRenderKey(prev => prev + 1);
+            return allEmployees;
         },
+        refetchOnMount: true,
+        refetchOnWindowFocus: true,
+        refetchOnReconnect: true,
+        staleTime: 0,
+        cacheTime: 0,
     });
+
+    // Apply filters
+    const filteredData = useMemo(() => {
+        if (allEmployeesData.length === 0) return [];
+
+        let filtered = [...allEmployeesData];
+
+        if (filters.search) {
+            const search = filters.search.toLowerCase();
+            filtered = filtered.filter(emp =>
+                emp.name?.toLowerCase().includes(search) ||
+                emp.phone?.toLowerCase().includes(search)
+            );
+        }
+
+        if (filters.employeeType && filters.employeeType !== 'all') {
+            filtered = filtered.filter(emp => emp.employee_type === filters.employeeType);
+        }
+
+        if (filters.shift && filters.shift !== 'all') {
+            filtered = filtered.filter(emp => emp.shift === filters.shift);
+        }
+
+        if (filters.status && filters.status !== 'all') {
+            filtered = filtered.filter(emp =>
+                filters.status === 'active' ? emp.is_active === 1 : emp.is_active === 0
+            );
+        }
+
+        return filtered;
+    }, [allEmployeesData, filters]);
+
+    // Apply pagination
+    const paginatedData = useMemo(() => {
+        if (filteredData.length === 0) return [];
+        const start = (currentPage - 1) * pageSize;
+        const end = start + pageSize;
+        return filteredData.slice(start, end);
+    }, [filteredData, currentPage]);
+
+    const totalPages = Math.ceil(filteredData.length / pageSize);
+    const startIndex = filteredData.length > 0 ? (currentPage - 1) * pageSize + 1 : 0;
+    const endIndex = Math.min(currentPage * pageSize, filteredData.length);
+    const totalCount = filteredData.length;
+
+    // Page validation
+    useEffect(() => {
+        if (filteredData.length > 0) {
+            const totalPagesCount = Math.ceil(filteredData.length / pageSize);
+            if (isFirstLoadRef.current) {
+                const savedPage = loadSavedPage();
+                let validPage = savedPage;
+                if (validPage > totalPagesCount) validPage = totalPagesCount;
+                if (validPage < 1) validPage = 1;
+                if (validPage !== currentPage) setCurrentPage(validPage);
+                isFirstLoadRef.current = false;
+            } else if (currentPage > totalPagesCount) {
+                setCurrentPage(totalPagesCount);
+            } else if (currentPage < 1) {
+                setCurrentPage(1);
+            }
+        } else {
+            if (currentPage !== 1) setCurrentPage(1);
+        }
+    }, [filteredData]);
+
+    // Save to localStorage
+    useEffect(() => {
+        if (!isFirstLoadRef.current) {
+            localStorage.setItem(STORAGE_KEYS.EMPLOYEES_PAGE, currentPage.toString());
+            localStorage.setItem(STORAGE_KEYS.EMPLOYEES_FILTERS, JSON.stringify(filters));
+        }
+    }, [currentPage, filters]);
+
+    // Restore scroll position
+    useEffect(() => {
+        if (!isLoading && paginatedData.length > 0 && mainContentRef.current && !isFirstLoadRef.current) {
+            const savedScrollPosition = localStorage.getItem(STORAGE_KEYS.EMPLOYEES_SCROLL_POSITION);
+            if (savedScrollPosition) {
+                setTimeout(() => {
+                    if (mainContentRef.current) {
+                        mainContentRef.current.scrollTo({
+                            top: parseInt(savedScrollPosition, 10),
+                            behavior: 'auto'
+                        });
+                    }
+                }, 100);
+            }
+        }
+    }, [isLoading, paginatedData]);
+
+    const handleScroll = useCallback(() => {
+        if (mainContentRef.current && !isFirstLoadRef.current) {
+            localStorage.setItem(STORAGE_KEYS.EMPLOYEES_SCROLL_POSITION, mainContentRef.current.scrollTop.toString());
+        }
+    }, []);
+
+    // Keyboard Shortcuts
+    useEffect(() => {
+        const handleShortcuts = (e: KeyboardEvent) => {
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+
+            // Ctrl + A - Add Employee
+            if (e.ctrlKey && e.key === 'a') {
+                e.preventDefault();
+                e.stopPropagation();
+                setSelectedEmployee(null);
+                setIsEmployeeModalOpen(true);
+                return;
+            }
+
+            // Ctrl + C - Clear Filters
+            if (e.ctrlKey && e.key === 'c') {
+                e.preventDefault();
+                e.stopPropagation();
+                setFilters({ search: "", employeeType: "", shift: "", status: "" });
+                setCurrentPage(1);
+                toast({ title: "Filters Cleared", description: "All filters have been reset" });
+                return;
+            }
+
+            // Ctrl + F - Focus Search
+            if (e.ctrlKey && e.key === 'f') {
+                e.preventDefault();
+                e.stopPropagation();
+                const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement;
+                if (searchInput) {
+                    searchInput.focus();
+                }
+                return;
+            }
+
+            // Arrow Left - Previous Page
+            if (e.key === 'ArrowLeft' && currentPage > 1) {
+                e.preventDefault();
+                setCurrentPage(p => p - 1);
+                return;
+            }
+
+            // Arrow Right - Next Page
+            if (e.key === 'ArrowRight' && currentPage < totalPages) {
+                e.preventDefault();
+                setCurrentPage(p => p + 1);
+                return;
+            }
+        };
+
+        window.addEventListener('keydown', handleShortcuts);
+        return () => window.removeEventListener('keydown', handleShortcuts);
+    }, [currentPage, totalPages]);
 
     const deleteEmployeeMutation = useMutation({
         mutationFn: async (employeeId: string) => {
             const result = await api.deleteEmployee(employeeId);
-            console.log('Delete result:', result);
             return result === true || result?.success === true;
         },
         onSuccess: () => {
             toast({ title: "Success", description: "Employee deleted successfully" });
             setIsDeleteDialogOpen(false);
             setEmployeeToDelete(null);
-            refetch(); // Refresh the list
+            refetch();
         },
         onError: (error: Error) => {
             toast({ title: "Error", description: error.message, variant: "destructive" });
         },
     });
 
-    // Replace the delete mutation with this:
     const toggleEmployeeStatusMutation = useMutation({
         mutationFn: async ({ employeeId, isActive }: { employeeId: string; isActive: boolean }) => {
-            // Update the employee's is_active status
             const result = await api.updateEmployee(employeeId, { is_active: isActive ? 1 : 0 });
-            console.log('Toggle status result:', result);
             return result;
         },
         onSuccess: (_, variables) => {
             const newStatus = variables.isActive ? 'activated' : 'deactivated';
-            toast({
-                title: "Success",
-                description: `Employee ${newStatus} successfully`
-            });
+            toast({ title: "Success", description: `Employee ${newStatus} successfully` });
             setIsDeleteDialogOpen(false);
             setEmployeeToDelete(null);
-            refetch(); // Refresh the list
+            refetch();
         },
         onError: (error: Error) => {
             toast({ title: "Error", description: error.message, variant: "destructive" });
         },
     });
 
-    // Replace handleDelete with this:
     const handleToggleStatus = (employee: any) => {
         setEmployeeToDelete(employee);
         setIsDeleteDialogOpen(true);
     };
 
-    // Replace confirmDelete with this:
     const confirmToggleStatus = () => {
         if (employeeToDelete) {
             const newStatus = employeeToDelete.is_active === 1 ? false : true;
@@ -130,7 +321,6 @@ export default function Employees() {
     };
 
     const handleViewDetails = (employeeId: string) => {
-        // window.location.href = `/employees/${employeeId}`;
         window.history.pushState({}, '', `/employees/${employeeId}`);
     };
 
@@ -236,7 +426,7 @@ export default function Employees() {
     ];
 
     // Calculate summary stats
-    const activeEmployees = employees.filter((emp: any) => emp.is_active === 1);
+    const activeEmployees = filteredData.filter((emp: any) => emp.is_active === 1);
     const totalMonthlySalary = activeEmployees.reduce((sum: number, emp: any) => sum + (emp.salary_type === 'monthly' ? emp.salary : emp.salary * 4), 0);
 
     const { setTitle, setSubtitle } = useHeader();
@@ -244,87 +434,117 @@ export default function Employees() {
     useEffect(() => {
         setTitle("Employees");
         setSubtitle("Manage employees, attendance and salaries");
-    }, [setTitle, setSubtitle]);
+    }, []);
 
     return (
-        <div className="flex-1 flex flex-col overflow-hidden">
-            <main className="flex-1 overflow-auto p-6">
+        <div className="flex-1 flex flex-col overflow-hidden" key={renderKey}>
+            <main
+                ref={mainContentRef}
+                className="flex-1 overflow-auto p-6"
+                onScroll={handleScroll}
+            >
                 {/* Summary Cards */}
-               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-6">
-    {/* Total Employees Card */}
-    <Card>
-        <CardContent className="p-4 sm:p-6">
-            <div className="flex items-center justify-between">
-                <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Total Employees</p>
-                    <p className="text-xl sm:text-2xl font-bold">{employees.length}</p>
-                </div>
-                <Users className="h-5 w-5 sm:h-6 sm:w-6 text-primary" />
-            </div>
-        </CardContent>
-    </Card>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-6">
+                    <Card>
+                        <CardContent className="p-4 sm:p-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-xs sm:text-sm text-muted-foreground">Total Employees</p>
+                                    <p className="text-xl sm:text-2xl font-bold">{totalCount}</p>
+                                </div>
+                                <Users className="h-5 w-5 sm:h-6 sm:w-6 text-primary" />
+                            </div>
+                        </CardContent>
+                    </Card>
 
-    {/* Active Employees Card */}
-    <Card>
-        <CardContent className="p-4 sm:p-6">
-            <div className="flex items-center justify-between">
-                <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Active Employees</p>
-                    <p className="text-xl sm:text-2xl font-bold text-green-600">{activeEmployees.length}</p>
-                </div>
-                <Badge className="bg-green-100 text-green-800 text-xs sm:text-sm px-2 py-1">
-                    Active
-                </Badge>
-            </div>
-        </CardContent>
-    </Card>
+                    <Card>
+                        <CardContent className="p-4 sm:p-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-xs sm:text-sm text-muted-foreground">Active Employees</p>
+                                    <p className="text-xl sm:text-2xl font-bold text-green-600">{activeEmployees.length}</p>
+                                </div>
+                                <Badge className="bg-green-100 text-green-800 text-xs sm:text-sm px-2 py-1">
+                                    Active
+                                </Badge>
+                            </div>
+                        </CardContent>
+                    </Card>
 
-    {/* Monthly Salary Card */}
-    <Card>
-        <CardContent className="p-4 sm:p-6">
-            <div className="flex items-center justify-between">
-                <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Monthly Salary</p>
-                    <p className="text-lg sm:text-2xl font-bold text-secondary break-words">
-                        {formatPKR(totalMonthlySalary)}
-                    </p>
-                </div>
-                <Banknote className="h-5 w-5 sm:h-6 sm:w-6 text-secondary flex-shrink-0" />
-            </div>
-        </CardContent>
-    </Card>
+                    <Card>
+                        <CardContent className="p-4 sm:p-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-xs sm:text-sm text-muted-foreground">Monthly Salary</p>
+                                    <p className="text-lg sm:text-2xl font-bold text-secondary break-words">
+                                        {formatPKR(totalMonthlySalary)}
+                                    </p>
+                                </div>
+                                <Banknote className="h-5 w-5 sm:h-6 sm:w-6 text-secondary flex-shrink-0" />
+                            </div>
+                        </CardContent>
+                    </Card>
 
-    {/* Managers Card */}
-    <Card>
-        <CardContent className="p-4 sm:p-6">
-            <div className="flex items-center justify-between">
-                <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">Managers</p>
-                    <p className="text-xl sm:text-2xl font-bold text-blue-600">
-                        {employees.filter((emp: any) => emp.employee_type === 'manager').length}
-                    </p>
+                    <Card>
+                        <CardContent className="p-4 sm:p-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-xs sm:text-sm text-muted-foreground">Managers</p>
+                                    <p className="text-xl sm:text-2xl font-bold text-blue-600">
+                                        {filteredData.filter((emp: any) => emp.employee_type === 'manager').length}
+                                    </p>
+                                </div>
+                                <Users className="h-5 w-5 sm:h-6 sm:w-6 text-blue-600" />
+                            </div>
+                        </CardContent>
+                    </Card>
                 </div>
-                <Users className="h-5 w-5 sm:h-6 sm:w-6 text-blue-600" />
-            </div>
-        </CardContent>
-    </Card>
-</div>
 
                 <Card>
                     <CardHeader>
-                        <div className="flex items-center justify-between">
-                            <CardTitle>Employees List</CardTitle>
-                            <Button onClick={handleAddNew}>
-                                <Plus className="h-4 w-4 mr-2" />
-                                Add Employee
-                            </Button>
+                        <div className="flex items-center justify-between flex-wrap gap-4">
+                            <div className="flex items-center gap-2">
+                                <CardTitle>Employees List</CardTitle>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setShowShortcuts(true)}
+                                    className="h-8 w-8"
+                                    title="Keyboard Shortcuts"
+                                >
+                                    <Keyboard className="h-4 w-4" />
+                                </Button>
+                            </div>
+                            <div className="flex space-x-2">
+                                <Button
+                                    onClick={() => {
+                                        localStorage.removeItem(STORAGE_KEYS.EMPLOYEES_PAGE);
+                                        localStorage.removeItem(STORAGE_KEYS.EMPLOYEES_FILTERS);
+                                        localStorage.removeItem(STORAGE_KEYS.EMPLOYEES_SCROLL_POSITION);
+                                        setFilters({ search: "", employeeType: "", shift: "", status: "" });
+                                        setCurrentPage(1);
+                                        isFirstLoadRef.current = true;
+                                        setRenderKey(prev => prev + 1);
+                                        toast({ title: "Reset", description: "All filters and pagination have been reset" });
+                                        refetch();
+                                    }}
+                                    variant="outline"
+                                    size="sm"
+                                >
+                                    Reset All
+                                </Button>
+                                <Button onClick={handleAddNew}>
+                                    <Plus className="h-4 w-4 mr-2" />
+                                    Add Employee
+                                </Button>
+                            </div>
                         </div>
                     </CardHeader>
                     <CardContent>
                         {/* Filters */}
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                             <Input
-                                placeholder="Search employees..."
+                                placeholder="Search employees... (Ctrl+F)"
                                 value={filters.search}
                                 onChange={(e) => setFilters({ ...filters, search: e.target.value })}
                             />
@@ -374,6 +594,15 @@ export default function Employees() {
                             </Select>
                         </div>
 
+                        {/* Results count */}
+                        <div className="mb-4 text-sm text-muted-foreground">
+                            {totalCount > 0 ? (
+                                `Showing ${startIndex} to ${endIndex} of ${totalCount} employees`
+                            ) : (
+                                !isLoading && "No employees found"
+                            )}
+                        </div>
+
                         {/* Data Table */}
                         {isLoading ? (
                             <div className="flex items-center justify-center py-8">
@@ -381,11 +610,96 @@ export default function Employees() {
                                 <span className="ml-2 text-muted-foreground">Loading employees...</span>
                             </div>
                         ) : (
-                            <DataTable
-                                data={employees}
-                                columns={columns}
-                                searchPlaceholder="Search employees..."
-                            />
+                            <>
+                                <div className="border rounded-lg overflow-hidden">
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full">
+                                            <thead className="bg-muted/50 border-b">
+                                                <tr>
+                                                    {columns.map((column) => (
+                                                        <th key={column.key} className="text-left p-3 font-medium text-sm">
+                                                            {column.label}
+                                                        </th>
+                                                    ))}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {paginatedData.length > 0 ? (
+                                                    paginatedData.map((employee: any, index: number) => (
+                                                        <tr key={employee.id} className={`border-b hover:bg-muted/30 transition-colors ${index % 2 === 0 ? 'bg-background' : 'bg-muted/10'}`}>
+                                                            {columns.map((column) => (
+                                                                <td key={column.key} className="p-3">
+                                                                    {column.render(employee[column.key], employee)}
+                                                                </td>
+                                                            ))}
+                                                        </tr>
+                                                    ))
+                                                ) : (
+                                                    <tr>
+                                                        <td colSpan={columns.length} className="text-center p-8 text-muted-foreground">
+                                                            No employees found.
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                {/* Pagination Controls */}
+                                {totalPages > 1 && (
+                                    <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                                        <div className="text-sm text-muted-foreground">
+                                            Page {currentPage} of {totalPages}
+                                        </div>
+                                        <div className="flex space-x-2">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                                disabled={currentPage === 1}
+                                            >
+                                                <ChevronLeft className="h-4 w-4 mr-1" />
+                                                Previous
+                                            </Button>
+                                            <div className="flex space-x-1">
+                                                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                                                    let pageNum;
+                                                    if (totalPages <= 5) {
+                                                        pageNum = i + 1;
+                                                    } else if (currentPage <= 3) {
+                                                        pageNum = i + 1;
+                                                    } else if (currentPage >= totalPages - 2) {
+                                                        pageNum = totalPages - 4 + i;
+                                                    } else {
+                                                        pageNum = currentPage - 2 + i;
+                                                    }
+                                                    return (
+                                                        <Button
+                                                            key={pageNum}
+                                                            variant={currentPage === pageNum ? "default" : "outline"}
+                                                            size="sm"
+                                                            onClick={() => setCurrentPage(pageNum)}
+                                                            className="w-10"
+                                                        >
+                                                            {pageNum}
+                                                        </Button>
+                                                    );
+                                                })}
+                                            </div>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                                disabled={currentPage === totalPages}
+                                            >
+                                                Next
+                                                <ChevronRight className="h-4 w-4 ml-1" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                )}
+                            </>
                         )}
                     </CardContent>
                 </Card>
@@ -398,7 +712,6 @@ export default function Employees() {
                     onRefresh={refetch}
                 />
 
-                {/* Delete Confirmation Dialog */}
                 {/* Status Change Confirmation Dialog */}
                 <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
                     <DialogContent>
@@ -430,6 +743,19 @@ export default function Employees() {
                     </DialogContent>
                 </Dialog>
             </main>
+
+            <KeyboardShortcutsModal
+                open={showShortcuts}
+                onOpenChange={setShowShortcuts}
+                title="Employees Page Shortcuts"
+                shortcuts={[
+                    { key: "Ctrl + A", description: "Add New Employee" },
+                    { key: "Ctrl + C", description: "Clear All Filters" },
+                    { key: "Ctrl + F", description: "Focus Search Bar" },
+                    { key: "←", description: "Previous Page" },
+                    { key: "→", description: "Next Page" },
+                ]}
+            />
         </div>
     );
 }

@@ -38,6 +38,7 @@ import { useHeader } from "@/contexts/HeaderContext";
 import { HanldePrintReceipt } from "@/utils/ReceiptGenerator";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigation } from "../App";
+import { BarcodeScannerModal } from "../components/modals/BarcodeScannerModal";
 
 interface CartItem {
     id: string;
@@ -142,25 +143,15 @@ export default function Orders() {
         }
     };
 
-    // Add this state for damage tracking
-    const [damagedItems, setDamagedItems] = useState<{ [key: string]: { isDamaged: boolean; quantity: number; reason: string } }>({});
 
-    // Add this to your cart items to show damage checkbox
-    const [showDamageDialog, setShowDamageDialog] = useState(false);
-    const [currentItemForDamage, setCurrentItemForDamage] = useState<any>(null);
-    const [damageQuantity, setDamageQuantity] = useState(1);
-    const [damageReason, setDamageReason] = useState("");
-    const [damageNotes, setDamageNotes] = useState("");
+    // Add state
+    const [isBarcodeScannerOpen, setIsBarcodeScannerOpen] = useState(false);
 
+    // Add handler
+    const handleBarcodeProductFound = (product: any) => {
+        addToCart(product);
+    };
     // Add damage reason options
-    const damageReasons = [
-        "Customer damaged",
-        "Shipping damaged",
-        "Manufacturing defect",
-        "Expired product",
-        "Wrong item received",
-        "Other"
-    ];
 
     const { settings, isLoading: settingsLoading } = useSettings();
 
@@ -1435,31 +1426,17 @@ export default function Orders() {
                             <Button
                                 variant="outline"
                                 size="icon"
-                                data-testid="button-barcode-scan"
-                                onClick={() => setIsBarcodeModalOpen(true)}
+                                onClick={() => setIsBarcodeScannerOpen(true)}
+                                title="Scan or Enter Barcode"
                             >
                                 <QrCode className="h-4 w-4" />
-                            </Button>
-                            <Button
-                                variant={isListening ? "default" : "outline"}
-                                size="icon"
-                                data-testid="button-voice-search"
-                                onMouseDown={startListening}
-                                onMouseUp={stopListening}
-                                onTouchStart={startListening}
-                                onTouchEnd={stopListening}
-                            >
-                                <Mic className={`h-4 w-4 ${isListening ? "text-red-500" : ""}`} />
                             </Button>
 
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                data-testid="button-barcode-scan"
-                                onClick={() => setIsScannerOpen(true)}
-                            >
-                                <QrCode className="h-4 w-4" />
-                            </Button>
+                            <BarcodeScannerModal
+                                open={isBarcodeScannerOpen}
+                                onOpenChange={setIsBarcodeScannerOpen}
+                                onProductFound={handleBarcodeProductFound}
+                            />
                         </div>
 
                         {/* Enhanced Filters */}

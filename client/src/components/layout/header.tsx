@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Bell, Menu, User, LogOut, AlertTriangle, Clock, Shield } from "lucide-react";
+import { Bell, Menu, User, LogOut, AlertTriangle, Clock, Shield, PanelLeftClose, PanelLeft } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { User as UserType } from "@/types/api";
 import { useEffect, useRef, useState } from "react";
@@ -12,6 +12,8 @@ interface HeaderProps {
   title: string;
   subtitle?: string;
   onMenuClick?: () => void;
+  onSidebarToggle?: () => void;
+  isSidebarOpen?: boolean;
 }
 
 // Helper function to format time remaining
@@ -47,7 +49,7 @@ function formatTimeRemaining(seconds: number): string {
   return `${secs} second${secs > 1 ? 's' : ''}`;
 }
 
-export function Header({ title, subtitle, onMenuClick }: HeaderProps) {
+export function Header({ title, subtitle, onMenuClick, onSidebarToggle, isSidebarOpen }: HeaderProps) {
   const { user, shop } = useAuth();
   const { loginType, switchToOperator } = useLoginType();
   const [licenseStatus, setLicenseStatus] = useState<{
@@ -190,6 +192,21 @@ export function Header({ title, subtitle, onMenuClick }: HeaderProps) {
               onClick={onMenuClick}
             >
               <Menu className="h-5 w-5" />
+            </Button>
+
+            {/* Desktop sidebar toggle button */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="hidden lg:flex"
+              onClick={onSidebarToggle}
+              title={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
+            >
+              {isSidebarOpen ? (
+                <PanelLeftClose className="h-5 w-5" />
+              ) : (
+                <PanelLeft className="h-5 w-5" />
+              )}
             </Button>
 
             <div>

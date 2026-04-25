@@ -18,7 +18,8 @@ import {
   Banknote,
   Undo2,
   HandCoins,
-  ShoppingBag
+  ShoppingBag,
+  HelpCircle
 } from "lucide-react";
 import { useHeader } from "@/contexts/HeaderContext";
 import { useAuth } from "@/hooks/useAuth";
@@ -45,6 +46,8 @@ const ALL_NAVIGATION = [
   { name: "Net Profit", href: "/net-profit", icon: Banknote, title: "Net Profit", subtitle: "Track Net Profit", adminOnly: true },
   { name: "Profile", href: "/profile", icon: UserCircle, title: "Profile", subtitle: "See Shop Details", adminOnly: false },
   { name: "Settings", href: "/settings", icon: Settings, title: "Settings", subtitle: "Manage settings", adminOnly: true },
+  { name: "User Guide", href: "/user-guide", icon: HelpCircle, title: "User Guide", subtitle: "Manage User Guide", adminOnly: true },
+  { name: "Terms Polices", href: "/terms-policies", icon: HelpCircle, title: "Terms Polices", subtitle: "Terms and Polices", adminOnly: true },
 ];
 
 interface SidebarProps {
@@ -57,13 +60,11 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { shop, user } = useAuth();
   const { loginType, switchToOperator, refetch } = useLoginType();
   const { visibleTabs } = useSidebarSettings();
-  const { currentPath, navigateTo } = useNavigation(); // Use the navigation hook
+  const { currentPath, navigateTo } = useNavigation();
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
 
-  // Filter navigation based on login type
   const filteredNavigation = ALL_NAVIGATION.filter(item => {
     if (loginType === 'admin') return true;
-    // For operator: only show tabs that are in visibleTabs
     return visibleTabs.includes(item.name);
   });
 
@@ -79,15 +80,14 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
   return (
     <>
-      <div
-        className={cn(
-          "fixed inset-y-0 left-0 w-64 bg-card border-r border-border flex flex-col z-40 transform transition-transform duration-300 ease-in-out",
-          isOpen ? "translate-x-0" : "-translate-x-full",
-          "lg:translate-x-0 lg:static lg:flex"
-        )}
-      >
-        {/* Mobile close button */}
-        <div className="lg:hidden flex justify-end p-4">
+<div
+  className={cn(
+    "w-64 bg-card border-r border-border flex flex-col shrink-0 transition-all duration-300 ease-in-out z-50",
+    isOpen ? "w-64" : "w-0 overflow-hidden border-r-0"
+  )}
+>
+        {/* Close button for both mobile and desktop when sidebar is open */}
+        <div className="flex justify-end p-4">
           <button
             onClick={onClose}
             className="rounded-md hover:bg-muted focus:outline-none"
@@ -97,7 +97,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         </div>
 
         {/* Logo */}
-        <div className="px-6 pb-4 lg:p-6 border-b border-border flex-shrink-0">
+        <div className="px-6 pb-4 border-b border-border flex-shrink-0">
           <div className="flex items-center space-x-3">
             <div className="w-14 h-14 rounded-lg flex items-center justify-center overflow-hidden bg-muted">
               {shop?.imageUrl ? (
@@ -132,10 +132,10 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                           : "text-muted-foreground hover:bg-muted hover:text-foreground"
                       )}
                       onClick={() => {
-                        navigateTo(item.href); // Use navigateTo instead of Link
+                        navigateTo(item.href);
                         setTitle(item.title);
                         setSubtitle(item.subtitle);
-                        onClose();
+                        // onClose();
                       }}
                     >
                       <item.icon className="h-5 w-5" />
@@ -171,7 +171,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         </div>
       </div>
 
-      {/* Overlay for mobile */}
+      {/* Overlay for when sidebar is open on mobile */}
       {isOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-30 lg:hidden"

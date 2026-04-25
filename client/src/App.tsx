@@ -23,6 +23,8 @@ import SettingsPage from "./pages/settings";
 import Employees from "./pages/employees/page";
 import EmployeeDetails from "./pages/employees/[id]/page";
 import { Profile } from "./pages/profile";
+import UserGuide from "./pages/user-guide";
+import TermsPolices from "./pages/terms-policies";
 import Returns from "./pages/returns";
 import ItemDetails from "./pages/item-details";
 import AdminDashboard from "./pages/admin";
@@ -37,7 +39,7 @@ type NavigationContextType = {
 
 export const NavigationContext = createContext<NavigationContextType>({
   currentPath: '/',
-  navigateTo: () => {},
+  navigateTo: () => { },
 });
 
 export const useNavigation = () => useContext(NavigationContext);
@@ -75,7 +77,7 @@ function MainContent({ path }: { path: string }) {
     const id = path.split('/')[2];
     return <EmployeeDetails params={{ id }} />;
   }
-  
+
   if (path.startsWith('/item-details/')) {
     const parts = path.split('/');
     const id = parts[2];
@@ -84,7 +86,7 @@ function MainContent({ path }: { path: string }) {
   }
 
   // Static routes
-  switch(path) {
+  switch (path) {
     case '/':
       return <Home />;
     case '/pos':
@@ -119,6 +121,10 @@ function MainContent({ path }: { path: string }) {
       return <SettingsPage />;
     case '/profile':
       return <Profile />;
+    case '/user-guide':
+      return <UserGuide />;
+    case '/terms-policies':
+      return <TermsPolices />;
     default:
       return <NotFound />;
   }
