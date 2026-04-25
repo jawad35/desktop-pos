@@ -15,6 +15,7 @@ import { api } from "../services/electron-api";
 import { useToast } from "@/hooks/use-toast";
 
 import { KeyboardShortcutsModal } from "../components/modals/KeyboardShortcutsModal";
+import { useNavigation } from "../App";
 // Storage keys
 const STORAGE_KEYS = {
     RETURNS_PAGE: 'returns_current_page',
@@ -382,9 +383,9 @@ export default function Returns() {
         return () => window.removeEventListener('keydown', handleShortcuts);
     }, [currentPage, totalPages]); // Add handleExport if needed
 
+    const { navigateTo } = useNavigation();
     const handleViewDetails = (saleId: string) => {
-        const state = "returns";
-        navigate(`/item-details/${saleId}/${state}`);
+        navigateTo(`/item-details/${saleId}/returns`);
     };
 
     const getStatusColor = (status: string) => {

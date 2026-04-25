@@ -59,10 +59,8 @@ interface Salary {
     notes?: string;
 }
 
-export default function EmployeeDetails() {
-    const [match, params] = useRoute("/employees/:id");
+export default function EmployeeDetails({ employeeId }) {
     const [, setLocation] = useLocation();
-    const employeeId = params?.id as string;
     const [selectedTab, setSelectedTab] = useState("attendance");
     const [attendanceDate, setAttendanceDate] = useState(format(new Date(), 'yyyy-MM-dd'));
     const [salaryDate, setSalaryDate] = useState(format(new Date(), 'yyyy-MM'));
@@ -367,70 +365,70 @@ export default function EmployeeDetails() {
         maxTotal: "",
     });
     const { data: sales = [], isLoading: salesLoading } = useQuery({
-    queryKey: ["sales", employee?.id, filters],
-    queryFn: async () => {
-        if (!employee?.id) return { data: [] };
-        const result = await api.getSales();
-        let salesData = [];
-        if (Array.isArray(result)) salesData = result;
-        else if (result?.success && Array.isArray(result.data)) salesData = result.data;
+        queryKey: ["sales", employee?.id, filters],
+        queryFn: async () => {
+            if (!employee?.id) return { data: [] };
+            const result = await api.getSales();
+            let salesData = [];
+            if (Array.isArray(result)) salesData = result;
+            else if (result?.success && Array.isArray(result.data)) salesData = result.data;
 
-        console.log('All sales before filtering:', salesData.length);
-        console.log('Sample sale:', salesData[0]);
+            console.log('All sales before filtering:', salesData.length);
+            console.log('Sample sale:', salesData[0]);
 
-        // Filter by employeeId (handle both field names) - DON'T filter by status here
-        salesData = salesData.filter((s: any) => 
-            s.employee_id === employee.id || s.employeeId === employee.id
-        );
+            // Filter by employeeId (handle both field names) - DON'T filter by status here
+            salesData = salesData.filter((s: any) =>
+                s.employee_id === employee.id || s.employeeId === employee.id
+            );
 
-        console.log('Sales after employee filter:', salesData.length);
+            console.log('Sales after employee filter:', salesData.length);
 
-        // Apply user filters (paymentStatus, minTotal, maxTotal, dates)
-        if (filters.paymentStatus) {
-            salesData = salesData.filter((s: any) => 
-                (s.payment_status || s.paymentStatus) === filters.paymentStatus
-            );
-        }
-        if (filters.minTotal) {
-            salesData = salesData.filter((s: any) => 
-                parseFloat(s.total || 0) >= parseFloat(filters.minTotal)
-            );
-        }
-        if (filters.maxTotal) {
-            salesData = salesData.filter((s: any) => 
-                parseFloat(s.total || 0) <= parseFloat(filters.maxTotal)
-            );
-        }
-        if (filters.startDate) {
-            salesData = salesData.filter((s: any) => 
-                new Date(s.created_at || s.createdAt) >= new Date(filters.startDate)
-            );
-        }
-        if (filters.endDate) {
-            salesData = salesData.filter((s: any) => 
-                new Date(s.created_at || s.createdAt) <= new Date(filters.endDate)
-            );
-        }
+            // Apply user filters (paymentStatus, minTotal, maxTotal, dates)
+            if (filters.paymentStatus) {
+                salesData = salesData.filter((s: any) =>
+                    (s.payment_status || s.paymentStatus) === filters.paymentStatus
+                );
+            }
+            if (filters.minTotal) {
+                salesData = salesData.filter((s: any) =>
+                    parseFloat(s.total || 0) >= parseFloat(filters.minTotal)
+                );
+            }
+            if (filters.maxTotal) {
+                salesData = salesData.filter((s: any) =>
+                    parseFloat(s.total || 0) <= parseFloat(filters.maxTotal)
+                );
+            }
+            if (filters.startDate) {
+                salesData = salesData.filter((s: any) =>
+                    new Date(s.created_at || s.createdAt) >= new Date(filters.startDate)
+                );
+            }
+            if (filters.endDate) {
+                salesData = salesData.filter((s: any) =>
+                    new Date(s.created_at || s.createdAt) <= new Date(filters.endDate)
+                );
+            }
 
-        // Normalize the data structure - keep all sales including cancelled/returned
-        return {
-            data: salesData.map((s: any) => ({
-                id: s.id,
-                receipt_number: s.receipt_number,
-                created_at: s.created_at || s.createdAt,
-                subtotal: s.subtotal || 0,
-                total: s.total || 0,
-                total_profit: s.total_profit || s.profit || 0,
-                payment_status: s.payment_status || s.paymentStatus || 'unknown',
-                customer_name: s.customer_name || s.customerName,
-                employee_id: s.employee_id || s.employeeId,
-                return_status: s.return_status || 'none',
-                total_returned_amount: s.total_returned_amount || 0,
-            }))
-        };
-    },
-    enabled: !!employee?.id && employee?.employee_type === 'salesman',
-});
+            // Normalize the data structure - keep all sales including cancelled/returned
+            return {
+                data: salesData.map((s: any) => ({
+                    id: s.id,
+                    receipt_number: s.receipt_number,
+                    created_at: s.created_at || s.createdAt,
+                    subtotal: s.subtotal || 0,
+                    total: s.total || 0,
+                    total_profit: s.total_profit || s.profit || 0,
+                    payment_status: s.payment_status || s.paymentStatus || 'unknown',
+                    customer_name: s.customer_name || s.customerName,
+                    employee_id: s.employee_id || s.employeeId,
+                    return_status: s.return_status || 'none',
+                    total_returned_amount: s.total_returned_amount || 0,
+                }))
+            };
+        },
+        enabled: !!employee?.id && employee?.employee_type === 'salesman',
+    });
 
 
     // Calculate totals for summary
@@ -850,70 +848,70 @@ export default function EmployeeDetails() {
                                     </div>
 
                                     {/* 🧮 Summary Cards - Fixed */}
-                                   {/* 🧮 Summary Cards - Shows all sales including cancelled/returned */}
-<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    <Card className="bg-blue-50">
-        <CardContent className="p-4">
-            <p className="text-sm text-muted-foreground">Total Sales (All)</p>
-            <p className="text-2xl font-bold text-blue-600">
-                {formatPKR(
-                    sales?.data?.reduce((acc, s) => acc + parseFloat(s.total || 0), 0) || 0
-                )}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-                {sales?.data?.length || 0} total transactions
-            </p>
-        </CardContent>
-    </Card>
+                                    {/* 🧮 Summary Cards - Shows all sales including cancelled/returned */}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                                        <Card className="bg-blue-50">
+                                            <CardContent className="p-4">
+                                                <p className="text-sm text-muted-foreground">Total Sales (All)</p>
+                                                <p className="text-2xl font-bold text-blue-600">
+                                                    {formatPKR(
+                                                        sales?.data?.reduce((acc, s) => acc + parseFloat(s.total || 0), 0) || 0
+                                                    )}
+                                                </p>
+                                                <p className="text-xs text-muted-foreground mt-1">
+                                                    {sales?.data?.length || 0} total transactions
+                                                </p>
+                                            </CardContent>
+                                        </Card>
 
-    <Card className="bg-green-50">
-        <CardContent className="p-4">
-            <p className="text-sm text-muted-foreground">Completed Sales</p>
-            <p className="text-2xl font-bold text-green-600">
-                {formatPKR(
-                    sales?.data
-                        ?.filter((s) => (s.payment_status === "completed"))
-                        ?.reduce((acc, s) => acc + parseFloat(s.total || 0), 0) || 0
-                )}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-                {sales?.data?.filter((s) => s.payment_status === "completed").length || 0} transactions
-            </p>
-        </CardContent>
-    </Card>
+                                        <Card className="bg-green-50">
+                                            <CardContent className="p-4">
+                                                <p className="text-sm text-muted-foreground">Completed Sales</p>
+                                                <p className="text-2xl font-bold text-green-600">
+                                                    {formatPKR(
+                                                        sales?.data
+                                                            ?.filter((s) => (s.payment_status === "completed"))
+                                                            ?.reduce((acc, s) => acc + parseFloat(s.total || 0), 0) || 0
+                                                    )}
+                                                </p>
+                                                <p className="text-xs text-muted-foreground mt-1">
+                                                    {sales?.data?.filter((s) => s.payment_status === "completed").length || 0} transactions
+                                                </p>
+                                            </CardContent>
+                                        </Card>
 
-    <Card className="bg-yellow-50">
-        <CardContent className="p-4">
-            <p className="text-sm text-muted-foreground">Pending Sales</p>
-            <p className="text-2xl font-bold text-yellow-600">
-                {formatPKR(
-                    sales?.data
-                        ?.filter((s) => s.payment_status === "pending")
-                        ?.reduce((acc, s) => acc + parseFloat(s.total || 0), 0) || 0
-                )}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-                {sales?.data?.filter((s) => s.payment_status === "pending").length || 0} transactions
-            </p>
-        </CardContent>
-    </Card>
+                                        <Card className="bg-yellow-50">
+                                            <CardContent className="p-4">
+                                                <p className="text-sm text-muted-foreground">Pending Sales</p>
+                                                <p className="text-2xl font-bold text-yellow-600">
+                                                    {formatPKR(
+                                                        sales?.data
+                                                            ?.filter((s) => s.payment_status === "pending")
+                                                            ?.reduce((acc, s) => acc + parseFloat(s.total || 0), 0) || 0
+                                                    )}
+                                                </p>
+                                                <p className="text-xs text-muted-foreground mt-1">
+                                                    {sales?.data?.filter((s) => s.payment_status === "pending").length || 0} transactions
+                                                </p>
+                                            </CardContent>
+                                        </Card>
 
-    <Card className="bg-red-50">
-        <CardContent className="p-4">
-            <p className="text-sm text-muted-foreground">Cancelled/Returned</p>
-            <p className="text-2xl font-bold text-red-600">
-                {formatPKR(
-                    sales?.data
-                        ?.filter((s) => s.payment_status === "cancelled" || s.return_status !== 'none')
-                        ?.reduce((acc, s) => acc + parseFloat(s.total || 0), 0) || 0
-                )}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-                {sales?.data?.filter((s) => s.payment_status === "cancelled" || s.return_status !== 'none').length || 0} transactions
-            </p>
-        </CardContent>
-    </Card>
-</div>
+                                        <Card className="bg-red-50">
+                                            <CardContent className="p-4">
+                                                <p className="text-sm text-muted-foreground">Cancelled/Returned</p>
+                                                <p className="text-2xl font-bold text-red-600">
+                                                    {formatPKR(
+                                                        sales?.data
+                                                            ?.filter((s) => s.payment_status === "cancelled" || s.return_status !== 'none')
+                                                            ?.reduce((acc, s) => acc + parseFloat(s.total || 0), 0) || 0
+                                                    )}
+                                                </p>
+                                                <p className="text-xs text-muted-foreground mt-1">
+                                                    {sales?.data?.filter((s) => s.payment_status === "cancelled" || s.return_status !== 'none').length || 0} transactions
+                                                </p>
+                                            </CardContent>
+                                        </Card>
+                                    </div>
 
                                     {/* 🧾 Sales List */}
                                     {salesLoading ? (
@@ -928,77 +926,75 @@ export default function EmployeeDetails() {
                                         </div>
                                     ) : (
                                         <div className="grid gap-3 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-                                           {sales?.data?.map((sale) => {
-    // Safe date formatting
-    let formattedDate = "Date not available";
-    try {
-        const dateValue = sale.created_at;
-        if (dateValue) {
-            const date = new Date(dateValue);
-            if (!isNaN(date.getTime())) {
-                formattedDate = format(date, "dd/MM/yyyy");
-            }
-        }
-    } catch (error) {
-        console.error("Date formatting error for sale:", sale.id, error);
-    }
+                                            {sales?.data?.map((sale) => {
+                                                // Safe date formatting
+                                                let formattedDate = "Date not available";
+                                                try {
+                                                    const dateValue = sale.created_at;
+                                                    if (dateValue) {
+                                                        const date = new Date(dateValue);
+                                                        if (!isNaN(date.getTime())) {
+                                                            formattedDate = format(date, "dd/MM/yyyy");
+                                                        }
+                                                    }
+                                                } catch (error) {
+                                                    console.error("Date formatting error for sale:", sale.id, error);
+                                                }
 
-    const paymentStatus = sale.payment_status || "unknown";
-    const customerName = sale.customer_name || "N/A";
-    const profit = sale.total_profit || 0;
-    const isReturned = sale.return_status !== 'none';
-    const isPartiallyReturned = sale.return_status === 'partial';
+                                                const paymentStatus = sale.payment_status || "unknown";
+                                                const customerName = sale.customer_name || "N/A";
+                                                const profit = sale.total_profit || 0;
+                                                const isReturned = sale.return_status !== 'none';
+                                                const isPartiallyReturned = sale.return_status === 'partial';
 
-    return (
-        <div
-            key={sale.id}
-            onClick={() => handleSaleClick(sale.id)}
-            className={`cursor-pointer p-4 border rounded-lg transition hover:bg-muted/50 ${
-                isReturned ? 'bg-red-50/30 border-red-200' : ''
-            }`}
-        >
-            <div className="flex items-center justify-between mb-2">
-                <p className="font-medium">{formattedDate}</p>
-                <div className="flex gap-2">
-                    {isReturned && (
-                        <Badge className={isPartiallyReturned ? "bg-yellow-500 text-white" : "bg-red-500 text-white"}>
-                            {isPartiallyReturned ? "Partial Return" : "Full Return"}
-                        </Badge>
-                    )}
-                    <span
-                        className={`text-xs font-semibold px-2 py-1 rounded-full ${
-                            paymentStatus === "completed"
-                                ? "bg-green-100 text-green-700"
-                                : paymentStatus === "pending"
-                                ? "bg-yellow-100 text-yellow-700"
-                                : "bg-red-100 text-red-700"
-                        }`}
-                    >
-                        {paymentStatus.toUpperCase()}
-                    </span>
-                </div>
-            </div>
-            <p className="text-sm text-muted-foreground mb-2">
-                Customer: {customerName}
-            </p>
-            <div className="flex justify-between text-sm mb-1">
-                <span>Subtotal: {formatPKR(sale.subtotal || 0)}</span>
-                <span className="font-semibold">Total: {formatPKR(sale.total || 0)}</span>
-            </div>
-            <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">Receipt: {sale.receipt_number || "N/A"}</span>
-                <span className={`font-medium ${profit >= 0 ? 'text-purple-600' : 'text-red-600'}`}>
-                    Profit: {formatPKR(profit)}
-                </span>
-            </div>
-            {sale.total_returned_amount > 0 && (
-                <div className="mt-2 text-xs text-red-600">
-                    Returned Amount: {formatPKR(sale.total_returned_amount)}
-                </div>
-            )}
-        </div>
-    );
-})}
+                                                return (
+                                                    <div
+                                                        key={sale.id}
+                                                        onClick={() => handleSaleClick(sale.id)}
+                                                        className={`cursor-pointer p-4 border rounded-lg transition hover:bg-muted/50 ${isReturned ? 'bg-red-50/30 border-red-200' : ''
+                                                            }`}
+                                                    >
+                                                        <div className="flex items-center justify-between mb-2">
+                                                            <p className="font-medium">{formattedDate}</p>
+                                                            <div className="flex gap-2">
+                                                                {isReturned && (
+                                                                    <Badge className={isPartiallyReturned ? "bg-yellow-500 text-white" : "bg-red-500 text-white"}>
+                                                                        {isPartiallyReturned ? "Partial Return" : "Full Return"}
+                                                                    </Badge>
+                                                                )}
+                                                                <span
+                                                                    className={`text-xs font-semibold px-2 py-1 rounded-full ${paymentStatus === "completed"
+                                                                            ? "bg-green-100 text-green-700"
+                                                                            : paymentStatus === "pending"
+                                                                                ? "bg-yellow-100 text-yellow-700"
+                                                                                : "bg-red-100 text-red-700"
+                                                                        }`}
+                                                                >
+                                                                    {paymentStatus.toUpperCase()}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                        <p className="text-sm text-muted-foreground mb-2">
+                                                            Customer: {customerName}
+                                                        </p>
+                                                        <div className="flex justify-between text-sm mb-1">
+                                                            <span>Subtotal: {formatPKR(sale.subtotal || 0)}</span>
+                                                            <span className="font-semibold">Total: {formatPKR(sale.total || 0)}</span>
+                                                        </div>
+                                                        <div className="flex justify-between text-xs">
+                                                            <span className="text-muted-foreground">Receipt: {sale.receipt_number || "N/A"}</span>
+                                                            <span className={`font-medium ${profit >= 0 ? 'text-purple-600' : 'text-red-600'}`}>
+                                                                Profit: {formatPKR(profit)}
+                                                            </span>
+                                                        </div>
+                                                        {sale.total_returned_amount > 0 && (
+                                                            <div className="mt-2 text-xs text-red-600">
+                                                                Returned Amount: {formatPKR(sale.total_returned_amount)}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     )}
                                 </CardContent>

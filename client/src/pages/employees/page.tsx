@@ -14,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { api } from "../../services/electron-api";
 import { KeyboardShortcutsModal } from "../../components/modals/KeyboardShortcutsModal";
 import { useLocation } from "wouter";
+import { useNavigation } from "../../App";
 
 // Storage keys
 const STORAGE_KEYS = {
@@ -319,9 +320,12 @@ export default function Employees() {
         setSelectedEmployee(null);
         setIsEmployeeModalOpen(true);
     };
+    const { navigateTo } = useNavigation();
 
     const handleViewDetails = (employeeId: string) => {
-        window.history.pushState({}, '', `/employees/${employeeId}`);
+        console.log(employeeId,'baka9s9s')
+        navigateTo(`/employees/${employeeId}`);
+        // window.history.pushState({}, '', `/employees/${employeeId}`);
     };
 
     const handleShareWhatsApp = (employee: any) => {

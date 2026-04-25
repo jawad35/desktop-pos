@@ -46,7 +46,7 @@ const ALL_NAVIGATION = [
   { name: "Net Profit", href: "/net-profit", icon: Banknote, title: "Net Profit", subtitle: "Track Net Profit", adminOnly: true },
   { name: "Profile", href: "/profile", icon: UserCircle, title: "Profile", subtitle: "See Shop Details", adminOnly: false },
   { name: "Settings", href: "/settings", icon: Settings, title: "Settings", subtitle: "Manage settings", adminOnly: true },
-  { name: "User Guide", href: "/user-guide", icon: HelpCircle, title: "User Guide", subtitle: "Manage User Guide", adminOnly: true },
+  { name: "User Guide", href: "/user-guide", icon: HelpCircle, title: "User Guide", subtitle: "User Guide", adminOnly: true },
   { name: "Terms Polices", href: "/terms-policies", icon: HelpCircle, title: "Terms Polices", subtitle: "Terms and Polices", adminOnly: true },
 ];
 
@@ -80,14 +80,14 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
   return (
     <>
-<div
-  className={cn(
-    "w-64 bg-card border-r border-border flex flex-col shrink-0 transition-all duration-300 ease-in-out z-50",
-    isOpen ? "w-64" : "w-0 overflow-hidden border-r-0"
-  )}
->
-        {/* Close button for both mobile and desktop when sidebar is open */}
-        <div className="flex justify-end p-4">
+      <div
+        className={cn(
+          "w-64 bg-card border-r border-border flex flex-col shrink-0 transition-all duration-300 ease-in-out z-50 h-full",
+          isOpen ? "w-64" : "w-0 overflow-hidden border-r-0"
+        )}
+      >
+        {/* Close button */}
+        <div className="flex justify-end p-4 shrink-0">
           <button
             onClick={onClose}
             className="rounded-md hover:bg-muted focus:outline-none"
@@ -97,7 +97,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         </div>
 
         {/* Logo */}
-        <div className="px-6 pb-4 border-b border-border flex-shrink-0">
+        <div className="px-6 pb-4 border-b border-border shrink-0">
           <div className="flex items-center space-x-3">
             <div className="w-14 h-14 rounded-lg flex items-center justify-center overflow-hidden bg-muted">
               {shop?.imageUrl ? (
@@ -113,6 +113,28 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             <div>
               <h1 className="text-xl font-bold text-foreground">{shop?.name || "ShopMart"}</h1>
             </div>
+          </div>
+        </div>
+
+        {/* Mode Chip - Fixed at top of scrollable area */}
+        <div className="p-4 border-b border-border shrink-0">
+          <div className="bg-muted p-3 rounded-lg">
+            <div className="mb-2">
+              <span className="text-xs text-muted-foreground">Current Mode</span>
+              <Badge variant={loginType === 'admin' ? "destructive" : "default"} className="ml-2">
+                {loginType === 'admin' ? 'Admin' : 'Operator'}
+              </Badge>
+            </div>
+
+            <Button
+              variant={loginType === 'admin' ? "destructive" : "outline"}
+              size="sm"
+              onClick={handleAdminToggle}
+              className="w-full"
+            >
+              {loginType === 'admin' ? <User className="h-4 w-4 mr-1" /> : <Shield className="h-4 w-4 mr-1" />}
+              {loginType === 'admin' ? 'Switch to Operator' : 'Switch to Admin'}
+            </Button>
           </div>
         </div>
 
@@ -135,11 +157,10 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                         navigateTo(item.href);
                         setTitle(item.title);
                         setSubtitle(item.subtitle);
-                        // onClose();
                       }}
                     >
                       <item.icon className="h-5 w-5" />
-                      <span>{item.name}</span>
+                      <span className="text-sm">{item.name}</span>
                     </div>
                   </li>
                 );
@@ -147,31 +168,9 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             </ul>
           </nav>
         </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-border flex-shrink-0 space-y-3">
-          <div className="bg-muted p-3 rounded-lg">
-            <div className="mb-3">
-              <span className="text-xs text-muted-foreground">Current Mode </span>
-              <Badge variant={loginType === 'admin' ? "destructive" : "default"} className="mt-1">
-                {loginType === 'admin' ? 'Admin' : 'Operator'}
-              </Badge>
-            </div>
-
-            <Button
-              variant={loginType === 'admin' ? "destructive" : "outline"}
-              size="sm"
-              onClick={handleAdminToggle}
-              className="w-full"
-            >
-              {loginType === 'admin' ? <User className="h-4 w-4 mr-1" /> : <Shield className="h-4 w-4 mr-1" />}
-              {loginType === 'admin' ? 'Switch to Operator' : 'Switch to Admin'}
-            </Button>
-          </div>
-        </div>
       </div>
 
-      {/* Overlay for when sidebar is open on mobile */}
+      {/* Overlay for mobile */}
       {isOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-30 lg:hidden"

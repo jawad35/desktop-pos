@@ -73,9 +73,10 @@ function useLicense() {
 // Main content renderer based on path
 function MainContent({ path }: { path: string }) {
   // Handle dynamic routes
+  // In App.tsx, update the MainContent function:
   if (path.startsWith('/employees/') && path !== '/employees') {
     const id = path.split('/')[2];
-    return <EmployeeDetails params={{ id }} />;
+    return <EmployeeDetails employeeId={id} />;
   }
 
   if (path.startsWith('/item-details/')) {

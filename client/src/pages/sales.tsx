@@ -16,6 +16,7 @@ import { api } from "../services/electron-api";
 import { useToast } from "@/hooks/use-toast";
 import { useLoginType } from "@/hooks/useLoginType";
 import { KeyboardShortcutsModal } from "../components/modals/KeyboardShortcutsModal";
+import { useNavigation } from "../App";
 
 // Storage keys
 const STORAGE_KEYS = {
@@ -309,10 +310,9 @@ export default function Sales() {
       toast({ title: "Export Failed", description: "Failed to export sales data", variant: "destructive" });
     }
   };
-
+  const { navigateTo } = useNavigation();
   const handleViewDetails = (saleId: string) => {
-    const state = "sales";
-    navigate(`/item-details/${saleId}/${state}`);
+    navigateTo(`/item-details/${saleId}/sales`);
   };
 
   const handleReturnFromSale = (receiptNumber: string) => {
@@ -526,6 +526,7 @@ export default function Sales() {
     setSubtitle("View and manage all sales transactions");
   }, []);
 
+  
   return (
     <div className="flex-1 flex flex-col overflow-hidden" key={renderKey}>
       <main
@@ -592,37 +593,37 @@ export default function Sales() {
         </div>
 
         <Card>
-        <CardHeader>
-    <div className="flex items-center justify-between flex-wrap gap-4">
-        <div className="flex items-center gap-2">
-            <CardTitle>Sales History</CardTitle>
-            <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setShowShortcuts(true)}
-                className="h-8 w-8"
-                title="Keyboard Shortcuts"
-            >
-                <Keyboard className="h-4 w-4" />
-            </Button>
-            <KeyboardShortcutsModal
-    open={showShortcuts}
-    onOpenChange={setShowShortcuts}
-    title="Sales Page Shortcuts"
-    shortcuts={shortcuts}
-/>
-        </div>
-        <div className="flex space-x-2">
-            <Button onClick={handleResetFilters} variant="outline" size="sm">
-                Reset All
-            </Button>
-            <Button onClick={handleExport} variant="outline">
-                <Download className="h-4 w-4 mr-2" />
-                Export CSV
-            </Button>
-        </div>
-    </div>
-</CardHeader>
+          <CardHeader>
+            <div className="flex items-center justify-between flex-wrap gap-4">
+              <div className="flex items-center gap-2">
+                <CardTitle>Sales History</CardTitle>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShowShortcuts(true)}
+                  className="h-8 w-8"
+                  title="Keyboard Shortcuts"
+                >
+                  <Keyboard className="h-4 w-4" />
+                </Button>
+                <KeyboardShortcutsModal
+                  open={showShortcuts}
+                  onOpenChange={setShowShortcuts}
+                  title="Sales Page Shortcuts"
+                  shortcuts={shortcuts}
+                />
+              </div>
+              <div className="flex space-x-2">
+                <Button onClick={handleResetFilters} variant="outline" size="sm">
+                  Reset All
+                </Button>
+                <Button onClick={handleExport} variant="outline">
+                  <Download className="h-4 w-4 mr-2" />
+                  Export CSV
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
               <Input

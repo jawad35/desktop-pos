@@ -435,6 +435,8 @@ export default function Products() {
     return () => window.removeEventListener('keydown', handleShortcuts);
   }, [currentPage, totalPages]);
 
+  
+
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productFormSchema),
     defaultValues: {

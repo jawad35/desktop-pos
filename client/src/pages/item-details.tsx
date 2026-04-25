@@ -84,11 +84,10 @@ interface ItemDetails {
   returnFee?: number;
 }
 
-export default function ItemDetails() {
+export default function ItemDetails({ params }) {
   const [, navigate] = useLocation();
   const { shop } = useAuth();
 
-  const [match, params] = useRoute('/item-details/:id/:mode');
   const { id, mode } = params || {};
 
   const { data: sale, isLoading, error, refetch } = useQuery<ItemDetails>({
@@ -299,7 +298,7 @@ export default function ItemDetails() {
     navigate(`/${mode}`);
   };
 
-  if (!match || !id) {
+  if ( !id) {
     return (
       <div className="flex-1 flex flex-col overflow-hidden">
         <main className="flex-1 overflow-auto p-6">
