@@ -17,20 +17,21 @@ import { Trash2 } from "lucide-react";
 // Define all available tabs for operator access
 const OPERATOR_TABS = [
     { name: "Dashboard", href: "/", adminOnly: false },
-    { name: "POS Terminal", href: "/orders", adminOnly: false },
+    { name: "POS Terminal", href: "/pos", adminOnly: false },
     { name: "Sales", href: "/sales", adminOnly: false },
     { name: "Returns", href: "/returns", adminOnly: false },
     { name: "Profile", href: "/profile", adminOnly: false },
-    { name: "Products", href: "/products" },
-    { name: "Purchases", href: "/purchases" },
-    { name: "Suppliers", href: "/suppliers" },
-    { name: "Categories", href: "/categories" },
-    { name: "Expenses", href: "/expenses" },
-    { name: "Employees", href: "/employees" },
-    { name: "Net Profit", href: "/net-profit" },
-
-    // { name: "Damaged Stock", href: "/damaged" },
-    { name: "Settings", href: "/settings" },
+    { name: "Products", href: "/products", adminOnly: true },
+    { name: "Purchases", href: "/purchases", adminOnly: true },
+    { name: "Suppliers", href: "/suppliers", adminOnly: true },
+    { name: "Categories", href: "/categories", adminOnly: true },
+    { name: "Expenses", href: "/expenses", adminOnly: true },
+    { name: "Employees", href: "/employees", adminOnly: true },
+    { name: "Net Profit", href: "/net-profit", adminOnly: true },
+    // { name: "Damaged Stock", href: "/damaged", adminOnly: true },
+    { name: "Settings", href: "/settings", adminOnly: true },
+    { name: "User Guide", href: "/user-guide", adminOnly: true },
+    { name: "Terms Polices", href: "/terms-policies", adminOnly: true },
 ];
 
 const ADMIN_ONLY_TABS = [

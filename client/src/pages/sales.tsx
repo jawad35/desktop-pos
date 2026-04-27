@@ -1,14 +1,17 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { DataTable } from "@/components/ui/data-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { formatPKR } from "@/lib/currency";
 import { format } from "date-fns";
-import { Eye, Download, ChevronRight, ChevronLeft, RotateCcw, Keyboard } from "lucide-react";
+import { Eye, Download, ChevronRight, ChevronLeft, RotateCcw, Keyboard, MessageCircle, ShoppingBag, TrendingUp, TrendingDown, Package, AlertCircle, CheckCircle, Clock, RefreshCw } from "lucide-react";
 import { useHeader } from "@/contexts/HeaderContext";
 import { useLocation } from "wouter";
 import { getPaymentMethodColor } from "@/utils/GetPaymentMethodColor";
@@ -61,6 +64,9 @@ export default function Sales() {
           endDate: parsed.endDate || "",
           paymentMethod: parsed.paymentMethod || "",
           search: parsed.search || "",
+          returnStatus: parsed.returnStatus || "all",
+          minAmount: parsed.minAmount || "",
+          maxAmount: parsed.maxAmount || "",
         };
       }
     } catch (error) { }
@@ -69,6 +75,9 @@ export default function Sales() {
       endDate: "",
       paymentMethod: "",
       search: "",
+      returnStatus: "all",
+      minAmount: "",
+      maxAmount: "",
     };
   };
 
@@ -82,6 +91,11 @@ export default function Sales() {
   const isFirstLoadRef = useRef(true);
   const { loginType } = useLoginType();
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
+  const [whatsappNumber, setWhatsappNumber] = useState("03295121520");
+  const { navigateTo } = useNavigation();
+  const [shopPhoneNo, setShopPhoneNo] = useState("");
+
   // Fetch data
   const { isLoading, refetch } = useQuery<any[]>({
     queryKey: ["sales", location],
@@ -137,6 +151,12 @@ export default function Sales() {
       console.log(`After search filter: ${filtered.length} records`);
     }
 
+    // Return status filter
+    if (filters.returnStatus !== "all") {
+      filtered = filtered.filter(sale => sale.return_status === filters.returnStatus);
+      console.log(`After return status filter: ${filtered.length} records`);
+    }
+
     if (filters.startDate) {
       filtered = filtered.filter(sale =>
         new Date(sale.created_at) >= new Date(filters.startDate)
@@ -158,11 +178,48 @@ export default function Sales() {
       console.log(`After payment method filter: ${filtered.length} records`);
     }
 
+    // Amount range filters
+    if (filters.minAmount) {
+      filtered = filtered.filter(sale =>
+        parseFloat(sale.total) >= parseFloat(filters.minAmount)
+      );
+      console.log(`After min amount filter: ${filtered.length} records`);
+    }
+
+    if (filters.maxAmount) {
+      filtered = filtered.filter(sale =>
+        parseFloat(sale.total) <= parseFloat(filters.maxAmount)
+      );
+      console.log(`After max amount filter: ${filtered.length} records`);
+    }
+
     console.log(`Final filtered count: ${filtered.length}`);
     return filtered;
   }, [allSalesData, filters]);
 
-  // Apply pagination using useMemo
+  // Calculate statistics
+  const totalSalesAmount = filteredData.reduce((sum: number, sale: any) => sum + parseFloat(sale.total || 0), 0);
+  const totalReturnedAmount = filteredData.reduce((sum: number, sale: any) => sum + (parseFloat(sale.total_returned_amount) || 0), 0);
+  const netRevenue = totalSalesAmount - totalReturnedAmount;
+
+  // Profit calculation (only for completed sales)
+  const completedSales = filteredData.filter(sale => sale.payment_status === 'completed');
+  const totalProfit = completedSales.reduce((sum, sale) => sum + (parseFloat(sale.total_profit) || 0), 0);
+
+  // Sales by status
+  const pendingSales = filteredData.filter(sale => sale.payment_status === 'pending');
+  const cancelledSales = filteredData.filter(sale => sale.payment_status === 'cancelled');
+
+  // Return statistics
+  const fullyReturned = filteredData.filter(sale => sale.return_status === 'full');
+  const partiallyReturned = filteredData.filter(sale => sale.return_status === 'partial');
+  const noReturn = filteredData.filter(sale => sale.return_status === 'none' || !sale.return_status);
+
+  // ROI Calculation
+  const totalCost = totalSalesAmount - totalProfit;
+  const roi = totalCost > 0 ? (totalProfit / totalCost) * 100 : 0;
+
+  // Apply pagination using useMemo (YOUR EXISTING PAGINATION LOGIC)
   const paginatedData = useMemo(() => {
     console.log("=== COMPUTING PAGINATED SALES DATA ===");
     console.log(`Filtered data length: ${filteredData.length}`);
@@ -182,7 +239,44 @@ export default function Sales() {
     return paginated;
   }, [filteredData, currentPage]);
 
-  // Validate and adjust current page when filtered data changes
+
+  useEffect(() => {
+    const loadShopPhoneNumber = async () => {
+      try {
+        // Try to get from electron first
+        if (window.electronAPI && window.electronAPI.getShopData) {
+          const result = await window.electronAPI.getShopData();
+          if (result.success && result.shop && result.shop.phoneNo) {
+            setShopPhoneNo(result.shop.phoneNo);
+            setWhatsappNumber(result.shop.phoneNo); // Auto-fill the WhatsApp number
+            return;
+          }
+        }
+
+        // Fallback to localStorage
+        const storedData = localStorage.getItem('shopData');
+        if (storedData) {
+          const shopData = JSON.parse(storedData);
+          if (shopData.phoneNo) {
+            setShopPhoneNo(shopData.phoneNo);
+            setWhatsappNumber(shopData.phoneNo); // Auto-fill the WhatsApp number
+            return;
+          }
+        }
+
+        // If no phone number found, use default
+        setWhatsappNumber("03295121520");
+      } catch (error) {
+        console.error('Failed to load shop phone number:', error);
+        setWhatsappNumber("03295121520");
+      }
+    };
+
+    loadShopPhoneNumber();
+  }, []);
+
+
+  // Validate and adjust current page when filtered data changes (YOUR EXISTING LOGIC)
   useEffect(() => {
     console.log("=== PAGE VALIDATION EFFECT ===");
     console.log(`Filtered data length: ${filteredData.length}`);
@@ -220,7 +314,7 @@ export default function Sales() {
     }
   }, [filteredData, currentPage]);
 
-  // Save to localStorage whenever state changes
+  // Save to localStorage whenever state changes (YOUR EXISTING LOGIC)
   useEffect(() => {
     if (!isFirstLoadRef.current) {
       console.log(`Saving to localStorage - Page: ${currentPage}, Filters:`, filters);
@@ -229,7 +323,7 @@ export default function Sales() {
     }
   }, [currentPage, filters]);
 
-  // Restore scroll position
+  // Restore scroll position (YOUR EXISTING LOGIC)
   useEffect(() => {
     if (!isLoading && paginatedData.length > 0 && mainContentRef.current && !isFirstLoadRef.current) {
       const savedScrollPosition = localStorage.getItem(STORAGE_KEYS.SALES_SCROLL_POSITION);
@@ -264,7 +358,10 @@ export default function Sales() {
     localStorage.removeItem(STORAGE_KEYS.SALES_PAGE);
     localStorage.removeItem(STORAGE_KEYS.SALES_FILTERS);
     localStorage.removeItem(STORAGE_KEYS.SALES_SCROLL_POSITION);
-    setFilters({ startDate: "", endDate: "", paymentMethod: "", search: "" });
+    setFilters({
+      startDate: "", endDate: "", paymentMethod: "", search: "",
+      returnStatus: "all", minAmount: "", maxAmount: ""
+    });
     setCurrentPage(1);
     isFirstLoadRef.current = true;
     setRenderKey(prev => prev + 1);
@@ -274,7 +371,7 @@ export default function Sales() {
 
   const handleExport = async () => {
     try {
-      const headers = ['Receipt No', 'Date', 'Customer Name', 'Customer Phone', 'Subtotal', 'Tax', 'Total', 'Payment Method', 'Status', 'Return Status', 'Returned Amount'];
+      const headers = ['Receipt No', 'Date', 'Customer Name', 'Customer Phone', 'Subtotal', 'Tax', 'Total', 'Payment Method', 'Status', 'Return Status', 'Returned Amount', 'Profit'];
       const csvRows = [headers];
 
       for (const sale of filteredData) {
@@ -289,7 +386,8 @@ export default function Sales() {
           `"${sale.payment_method || ''}"`,
           `"${sale.payment_status || ''}"`,
           `"${sale.return_status || 'none'}"`,
-          sale.total_returned_amount?.toString() || '0'
+          sale.total_returned_amount?.toString() || '0',
+          sale.total_profit?.toString() || '0'
         ]);
       }
 
@@ -310,7 +408,49 @@ export default function Sales() {
       toast({ title: "Export Failed", description: "Failed to export sales data", variant: "destructive" });
     }
   };
-  const { navigateTo } = useNavigation();
+
+  const sendWhatsAppReport = () => {
+    const dateRange = filters.startDate && filters.endDate
+      ? `${format(new Date(filters.startDate), 'dd/MM/yyyy')} - ${format(new Date(filters.endDate), 'dd/MM/yyyy')}`
+      : 'All Time';
+
+    const returnStatusText = filters.returnStatus === 'full' ? 'Fully Returned' :
+      filters.returnStatus === 'partial' ? 'Partially Returned' :
+        filters.returnStatus === 'none' ? 'No Returns' : 'All Sales';
+
+    const message = `📊 *SALES REPORT - Brainsees POS* 📊%0A%0A` +
+      `📅 Period: ${dateRange}%0A` +
+      `🔄 Filter: ${returnStatusText}%0A` +
+      `💰 Amount Range: ${filters.minAmount || '0'} - ${filters.maxAmount || 'Any'}%0A%0A` +
+      `━━━━━━━━━━━━━━━━━━━━%0A` +
+      `📈 *REVENUE SUMMARY*%0A` +
+      `━━━━━━━━━━━━━━━━━━━━%0A` +
+      `💰 Total Sales: ${formatPKR(totalSalesAmount)}%0A` +
+      `🔄 Total Returned: ${formatPKR(totalReturnedAmount)}%0A` +
+      `📊 Net Revenue: ${formatPKR(netRevenue)}%0A` +
+      `💵 Total Profit: ${formatPKR(totalProfit)}%0A` +
+      `📈 ROI: ${roi.toFixed(2)}%0A%0A` +
+      `━━━━━━━━━━━━━━━━━━━━%0A` +
+      `📋 *SALES BREAKDOWN*%0A` +
+      `━━━━━━━━━━━━━━━━━━━━%0A` +
+      `✅ Completed: ${completedSales.length} (${formatPKR(completedSales.reduce((sum, s) => sum + parseFloat(s.total), 0))})%0A` +
+      `⏳ Pending: ${pendingSales.length} (${formatPKR(pendingSales.reduce((sum, s) => sum + parseFloat(s.total), 0))})%0A` +
+      `❌ Cancelled: ${cancelledSales.length} (${formatPKR(cancelledSales.reduce((sum, s) => sum + parseFloat(s.total), 0))})%0A%0A` +
+      `━━━━━━━━━━━━━━━━━━━━%0A` +
+      `🔄 *RETURN STATUS*%0A` +
+      `━━━━━━━━━━━━━━━━━━━━%0A` +
+      `🔴 Fully Returned: ${fullyReturned.length}%0A` +
+      `🟡 Partially Returned: ${partiallyReturned.length}%0A` +
+      `🟢 No Returns: ${noReturn.length}%0A%0A` +
+      `📝 Total Transactions: ${filteredData.length}%0A` +
+      `🏪 *Brainsees POS System*%0A` +
+      `📱 Generated: ${new Date().toLocaleString()}`;
+
+    const whatsappUrl = `https://wa.me/${whatsappNumber.replace(/\D/g, '').replace(/^0/, '')}?text=${message}`;
+    window.open(whatsappUrl, '_blank');
+    setShowWhatsAppModal(false);
+  };
+
   const handleViewDetails = (saleId: string) => {
     navigateTo(`/item-details/${saleId}/sales`);
   };
@@ -448,9 +588,6 @@ export default function Sales() {
     },
   ].filter(Boolean);
 
-  const totalSalesAmount = filteredData.reduce((sum: number, sale: any) => sum + parseFloat(sale.total || 0), 0);
-  const completedSales = filteredData.filter((sale: any) => sale?.payment_status === 'completed');
-  const pendingSales = filteredData.filter((sale: any) => sale?.payment_status === 'pending');
   const totalCount = filteredData.length;
   const totalPages = Math.ceil(totalCount / pageSize);
   const startIndex = totalCount > 0 ? (currentPage - 1) * pageSize + 1 : 0;
@@ -461,15 +598,9 @@ export default function Sales() {
   // Keyboard Shortcuts
   useEffect(() => {
     const handleShortcuts = (e: KeyboardEvent) => {
-      // Don't trigger if typing in input fields
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable) {
-        return;
-      }
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
 
-      // Ctrl + E - Export
       if (e.ctrlKey && e.key === 'e') {
         e.preventDefault();
         e.stopPropagation();
@@ -477,7 +608,6 @@ export default function Sales() {
         return;
       }
 
-      // Ctrl + C - Clear Filters
       if (e.ctrlKey && e.key === 'c') {
         e.preventDefault();
         e.stopPropagation();
@@ -485,38 +615,28 @@ export default function Sales() {
         return;
       }
 
-      // Ctrl + F - Focus Search
       if (e.ctrlKey && e.key === 'f') {
         e.preventDefault();
         e.stopPropagation();
         const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement;
-        if (searchInput) {
-          searchInput.focus();
-        }
+        if (searchInput) searchInput.focus();
         return;
       }
 
-      // Arrow Left - Previous Page
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         e.stopPropagation();
-        if (currentPage > 1) {
-          setCurrentPage(p => p - 1);
-        }
+        if (currentPage > 1) setCurrentPage(p => p - 1);
         return;
       }
 
-      // Arrow Right - Next Page
       if (e.key === 'ArrowRight') {
         e.preventDefault();
         e.stopPropagation();
-        if (currentPage < totalPages) {
-          setCurrentPage(p => p + 1);
-        }
+        if (currentPage < totalPages) setCurrentPage(p => p + 1);
         return;
       }
     };
-
     window.addEventListener('keydown', handleShortcuts);
     return () => window.removeEventListener('keydown', handleShortcuts);
   }, [currentPage, totalPages]);
@@ -526,7 +646,6 @@ export default function Sales() {
     setSubtitle("View and manage all sales transactions");
   }, []);
 
-  
   return (
     <div className="flex-1 flex flex-col overflow-hidden" key={renderKey}>
       <main
@@ -534,17 +653,17 @@ export default function Sales() {
         className="flex-1 overflow-auto p-6"
         onScroll={handleScroll}
       >
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+        {/* Summary Cards Row 1 - Overview */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
           <Card>
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Total Sales</p>
-                  <p className="text-2xl font-bold text-foreground">{totalCount}</p>
+                  <p className="text-2xl font-bold text-blue-600">{formatPKR(totalSalesAmount)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{totalCount} transactions</p>
                 </div>
-                <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center">
-                  <Eye className="h-6 w-6 text-primary" />
-                </div>
+                <ShoppingBag className="h-8 w-8 text-blue-500" />
               </div>
             </CardContent>
           </Card>
@@ -553,12 +672,11 @@ export default function Sales() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">Total Revenue</p>
-                  <p className="text-2xl font-bold text-secondary">{formatPKR(totalSalesAmount)}</p>
+                  <p className="text-sm text-muted-foreground">Total Returned</p>
+                  <p className="text-2xl font-bold text-red-600">{formatPKR(totalReturnedAmount)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{fullyReturned.length} fully returned</p>
                 </div>
-                <div className="w-12 h-12 bg-secondary/10 rounded-lg flex items-center justify-center">
-                  <Download className="h-6 w-6 text-secondary" />
-                </div>
+                <RotateCcw className="h-8 w-8 text-red-500" />
               </div>
             </CardContent>
           </Card>
@@ -567,26 +685,79 @@ export default function Sales() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">Completed</p>
-                  <p className="text-2xl font-bold text-secondary">{completedSales.length}</p>
+                  <p className="text-sm text-muted-foreground">Net Revenue</p>
+                  <p className="text-2xl font-bold text-green-600">{formatPKR(netRevenue)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">After returns</p>
                 </div>
-                <div className="w-12 h-12 bg-secondary/10 rounded-lg flex items-center justify-center">
-                  <Badge className="bg-secondary/10 text-secondary">✓</Badge>
-                </div>
+                <TrendingUp className="h-8 w-8 text-green-500" />
               </div>
             </CardContent>
           </Card>
 
+          {loginType === "admin" && (
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total Profit</p>
+                    <p className="text-2xl font-bold text-purple-600">{formatPKR(totalProfit)}</p>
+                    <p className="text-xs text-muted-foreground mt-1">ROI: {roi.toFixed(1)}%</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+
+        {/* Summary Cards Row 2 - Status Breakdown */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
           <Card>
-            <CardContent className="p-6">
+            <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">Pending</p>
-                  <p className="text-2xl font-bold text-accent">{pendingSales.length}</p>
+                  <p className="text-sm text-muted-foreground">✅ Completed</p>
+                  <p className="text-xl font-bold text-green-600">{completedSales.length}</p>
                 </div>
-                <div className="w-12 h-12 bg-accent/10 rounded-lg flex items-center justify-center">
-                  <Badge className="bg-accent/10 text-accent">⏳</Badge>
+                <CheckCircle className="h-5 w-5 text-green-500" />
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">{formatPKR(completedSales.reduce((sum, s) => sum + parseFloat(s.total), 0))}</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">⏳ Pending</p>
+                  <p className="text-xl font-bold text-yellow-600">{pendingSales.length}</p>
                 </div>
+                <Clock className="h-5 w-5 text-yellow-500" />
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">{formatPKR(pendingSales.reduce((sum, s) => sum + parseFloat(s.total), 0))}</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">❌ Cancelled</p>
+                  <p className="text-xl font-bold text-red-600">{cancelledSales.length}</p>
+                </div>
+                <AlertCircle className="h-5 w-5 text-red-500" />
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">{formatPKR(cancelledSales.reduce((sum, s) => sum + parseFloat(s.total), 0))}</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">🔴 Fully Returned</p>
+                  <p className="text-xl font-bold text-red-600">{fullyReturned.length}</p>
+                </div>
+                <RefreshCw className="h-5 w-5 text-red-500" />
               </div>
             </CardContent>
           </Card>
@@ -617,6 +788,10 @@ export default function Sales() {
                 <Button onClick={handleResetFilters} variant="outline" size="sm">
                   Reset All
                 </Button>
+                <Button onClick={() => setShowWhatsAppModal(true)} variant="outline" size="sm">
+                  <MessageCircle className="h-4 w-4 mr-2" />
+                  Share Report
+                </Button>
                 <Button onClick={handleExport} variant="outline">
                   <Download className="h-4 w-4 mr-2" />
                   Export CSV
@@ -625,7 +800,8 @@ export default function Sales() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            {/* Filters */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               <Input
                 placeholder="Search by receipt, customer..."
                 value={filters.search}
@@ -660,6 +836,32 @@ export default function Sales() {
                   <SelectItem value="check">Check</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <Select value={filters.returnStatus} onValueChange={(value) => handleFilterChange('returnStatus', value)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Return Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Returns Status</SelectItem>
+                  <SelectItem value="none">No Return</SelectItem>
+                  <SelectItem value="partial">Partially Returned</SelectItem>
+                  <SelectItem value="full">Fully Returned</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                type="number"
+                placeholder="Min Amount (PKR)"
+                value={filters.minAmount}
+                onChange={(e) => handleFilterChange('minAmount', e.target.value)}
+              />
+              <Input
+                type="number"
+                placeholder="Max Amount (PKR)"
+                value={filters.maxAmount}
+                onChange={(e) => handleFilterChange('maxAmount', e.target.value)}
+              />
             </div>
 
             <div className="mb-4 text-xs text-muted-foreground bg-muted p-2 rounded">
@@ -720,6 +922,7 @@ export default function Sales() {
                   </div>
                 </div>
 
+                {/* Pagination Controls - YOUR EXISTING PAGINATION */}
                 {totalPages > 1 && (
                   <div className="flex items-center justify-between mt-4 pt-4 border-t">
                     <div className="text-sm text-muted-foreground">
@@ -777,6 +980,55 @@ export default function Sales() {
           </CardContent>
         </Card>
       </main>
+
+      {/* WhatsApp Modal */}
+      <Dialog open={showWhatsAppModal} onOpenChange={setShowWhatsAppModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Share Sales Report</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-medium mb-1">WhatsApp Number</p>
+              <Input
+                placeholder="923295121520"
+                value={whatsappNumber}
+                onChange={(e) => setWhatsappNumber(e.target.value)}
+              />
+              {shopPhoneNo && (
+                <p className="text-xs text-green-600 mt-1">
+                  ✓ Shop phone number loaded: {shopPhoneNo}
+                  <button
+                    onClick={() => setWhatsappNumber(shopPhoneNo)}
+                    className="ml-2 text-blue-500 hover:underline text-xs"
+                  >
+                    Use shop number
+                  </button>
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground mt-1">
+                Example: 923295121520 (Pakistan - without leading zero)
+              </p>
+            </div>
+
+            <div className="bg-muted p-3 rounded-lg">
+              <p className="text-sm font-medium">Report Summary:</p>
+              <p className="text-xs text-muted-foreground mt-1">Total Sales: {formatPKR(totalSalesAmount)}</p>
+              <p className="text-xs text-muted-foreground">Total Returned: {formatPKR(totalReturnedAmount)}</p>
+              <p className="text-xs text-muted-foreground">Net Revenue: {formatPKR(netRevenue)}</p>
+              {loginType === "admin" && <p className="text-xs text-muted-foreground">Total Profit: {formatPKR(totalProfit)}</p>}
+              <p className="text-xs text-muted-foreground">Transactions: {totalCount}</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowWhatsAppModal(false)}>Cancel</Button>
+            <Button onClick={sendWhatsAppReport}>
+              <MessageCircle className="h-4 w-4 mr-2" />
+              Send via WhatsApp
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

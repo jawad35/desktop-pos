@@ -23,6 +23,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { getPaymentMethodColor } from "@/utils/GetPaymentMethodColor";
 import EditSaleForm from "@/components/Sale/EditSaleForm";
 import { api } from "../services/electron-api";
+import { useNavigation } from "../App";
 
 interface SaleItem {
   id: string;
@@ -293,12 +294,12 @@ export default function ItemDetails({ params }) {
       HanldePrintReceipt({ generateReceiptData });
     }
   };
-
+  const { navigateTo } = useNavigation();
   const handleBack = () => {
-    navigate(`/${mode}`);
+    navigateTo(`/${mode}`);
   };
 
-  if ( !id) {
+  if (!id) {
     return (
       <div className="flex-1 flex flex-col overflow-hidden">
         <main className="flex-1 overflow-auto p-6">
@@ -566,58 +567,58 @@ export default function ItemDetails({ params }) {
 
           {/* Summary Sidebar */}
           <div className="space-y-6">
- <Card>
-  <CardHeader>
-    <CardTitle className="flex items-center">
-      <Banknote className="h-5 w-5 mr-2" />
-      Amount Summary
-    </CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-3">
-    <div className="flex justify-between">
-      <span className="text-muted-foreground">Subtotal:</span>
-      <span className="font-semibold">{formatPKR(parseFloat(sale.subtotal))}</span>
-    </div>
-    
-    {/* Tax - Calculate from percentage */}
-    <div className="flex justify-between">
-      <span className="text-muted-foreground">
-        Tax ({parseFloat(sale.tax)}%):
-      </span>
-      <span className="font-semibold">
-        {formatPKR((parseFloat(sale.subtotal) * parseFloat(sale.tax)) / 100)}
-      </span>
-    </div>
-    
-    {/* Discount - Calculate from percentage */}
-    <div className="flex justify-between">
-      <span className="text-muted-foreground">
-        Discount ({parseFloat(sale.discount)}%):
-      </span>
-      <span className="font-semibold text-destructive">
-        -{formatPKR((parseFloat(sale.subtotal) * parseFloat(sale.discount)) / 100)}
-      </span>
-    </div>
-    
-    {sale.totalReturnedAmount && sale.totalReturnedAmount > 0 && (
-      <div className="flex justify-between border-t pt-2">
-        <span className="text-muted-foreground">Total Returned:</span>
-        <span className="font-semibold text-destructive">
-          -{formatPKR(sale.totalReturnedAmount)}
-        </span>
-      </div>
-    )}
-    
-    <div className="flex justify-between border-t pt-3">
-      <span className="font-bold text-lg">Net Total:</span>
-      <span className="font-bold text-lg text-primary">
-        {formatPKR(
-          parseFloat(sale.total) - (sale.totalReturnedAmount || 0)
-        )}
-      </span>
-    </div>
-  </CardContent>
-</Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <Banknote className="h-5 w-5 mr-2" />
+                  Amount Summary
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Subtotal:</span>
+                  <span className="font-semibold">{formatPKR(parseFloat(sale.subtotal))}</span>
+                </div>
+
+                {/* Tax - Calculate from percentage */}
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">
+                    Tax ({parseFloat(sale.tax)}%):
+                  </span>
+                  <span className="font-semibold">
+                    {formatPKR((parseFloat(sale.subtotal) * parseFloat(sale.tax)) / 100)}
+                  </span>
+                </div>
+
+                {/* Discount - Calculate from percentage */}
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">
+                    Discount ({parseFloat(sale.discount)}%):
+                  </span>
+                  <span className="font-semibold text-destructive">
+                    -{formatPKR((parseFloat(sale.subtotal) * parseFloat(sale.discount)) / 100)}
+                  </span>
+                </div>
+
+                {sale.totalReturnedAmount && sale.totalReturnedAmount > 0 && (
+                  <div className="flex justify-between border-t pt-2">
+                    <span className="text-muted-foreground">Total Returned:</span>
+                    <span className="font-semibold text-destructive">
+                      -{formatPKR(sale.totalReturnedAmount)}
+                    </span>
+                  </div>
+                )}
+
+                <div className="flex justify-between border-t pt-3">
+                  <span className="font-bold text-lg">Net Total:</span>
+                  <span className="font-bold text-lg text-primary">
+                    {formatPKR(
+                      parseFloat(sale.total) - (sale.totalReturnedAmount || 0)
+                    )}
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center">

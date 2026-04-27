@@ -249,9 +249,9 @@ export function Header({ title, subtitle, onMenuClick, onSidebarToggle, isSideba
                         "Admin User"
                         : "Loading..."}
                     </p>
-                    <p className="text-xs text-muted-foreground">
+                    {/* <p className="text-xs text-muted-foreground">
                       {user?.email || "admin@shopsmart.pk"}
-                    </p>
+                    </p> */}
                   </div>
                   <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
                     <User className="h-4 w-4 text-primary-foreground" />

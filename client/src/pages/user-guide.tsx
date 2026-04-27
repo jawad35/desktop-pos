@@ -51,7 +51,6 @@ import {
   MapPin,
   Car,
   Calendar,
-  DollarSign,
   Percent,
   FileSpreadsheet,
   Database,
@@ -180,7 +179,7 @@ export default function UserGuide() {
                   <div>
                     <p><strong>Minimum Requirements:</strong></p>
                     <ul className="list-disc list-inside space-y-1 mt-2 text-muted-foreground">
-                      <li>Windows 10 / macOS 11+ / Linux</li>
+                      <li>Windows 10</li>
                       <li>4GB RAM (8GB recommended)</li>
                       <li>500MB free disk space</li>
                       <li>Internet connection for activation</li>
@@ -190,9 +189,10 @@ export default function UserGuide() {
                     <p><strong>Supported Hardware:</strong></p>
                     <ul className="list-disc list-inside space-y-1 mt-2 text-muted-foreground">
                       <li>Barcode scanners (USB/Bluetooth)</li>
+                      <li>Thermal label printers</li>
                       <li>Receipt printers</li>
                       <li>Cash drawers</li>
-                      <li>Touch screens</li>
+                      {/* <li>Touch screens</li> */}
                     </ul>
                   </div>
                 </div>
@@ -245,11 +245,11 @@ export default function UserGuide() {
                       <p className="font-medium">Scanner Input</p>
                       <p className="text-xs text-muted-foreground">Connect USB barcode scanner - scans automatically add products to cart</p>
                     </div>
-                    <div className="bg-muted/30 p-3 rounded-lg">
+                    {/* <div className="bg-muted/30 p-3 rounded-lg">
                       <Mic className="h-5 w-5 mb-2 text-primary" />
                       <p className="font-medium">Voice Search</p>
                       <p className="text-xs text-muted-foreground">Click microphone icon and speak product name to search</p>
-                    </div>
+                    </div> */}
                   </div>
                 </div>
               </CardContent>
@@ -699,7 +699,7 @@ export default function UserGuide() {
         <Card className="mt-8 bg-primary/5">
           <CardContent className="p-6 text-center">
             <p className="text-sm text-muted-foreground">
-              Need help? Contact support at <strong>support@brainsees.com</strong> or call <strong>+92-329-6121520</strong>
+              Need help? Contact support at <strong>info@brainsees.com</strong> or call <strong>+92-329-6121520</strong>
             </p>
             <p className="text-xs text-muted-foreground mt-2">
               Brainsees POS v1.0 - All rights reserved

@@ -20,6 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Edit } from "lucide-react";
 import { EditSalaryModal } from "../modals/EditSalaryModal";
 import { EditAttendanceModal } from "../modals/EditAttendanceModal";
+import { useNavigation } from "../../../App";
 interface Employee {
     id: string;
     name: string;
@@ -118,9 +119,9 @@ export default function EmployeeDetails({ employeeId }) {
         const dailyRate = monthlySalary / daysInMonth;
         return absentCount * dailyRate;
     };
-
+    const { navigateTo } = useNavigation();
     const handleBack = () => {
-        setLocation("/employees"); // Navigate back to employees list
+        navigateTo("/employees");
     };
 
     // Handle click redirect
@@ -964,10 +965,10 @@ export default function EmployeeDetails({ employeeId }) {
                                                                 )}
                                                                 <span
                                                                     className={`text-xs font-semibold px-2 py-1 rounded-full ${paymentStatus === "completed"
-                                                                            ? "bg-green-100 text-green-700"
-                                                                            : paymentStatus === "pending"
-                                                                                ? "bg-yellow-100 text-yellow-700"
-                                                                                : "bg-red-100 text-red-700"
+                                                                        ? "bg-green-100 text-green-700"
+                                                                        : paymentStatus === "pending"
+                                                                            ? "bg-yellow-100 text-yellow-700"
+                                                                            : "bg-red-100 text-red-700"
                                                                         }`}
                                                                 >
                                                                     {paymentStatus.toUpperCase()}

@@ -204,7 +204,7 @@ export default function ActivationScreen({ onActivated }: ActivationProps) {
                                     <Button 
                                         variant="link" 
                                         className="p-0 h-auto mt-2 text-sm"
-                                        onClick={() => window.open('mailto:support@yourdomain.com')}
+                                        onClick={() => window.open('mailto:info@brainsees.com')}
                                     >
                                         Contact Support →
                                     </Button>

@@ -108,49 +108,185 @@ async function verifyShopSubscription() {
 
         writeLog(`📡 Calling server API to check subscription for shop: ${shopId}`);
 
+        let serverAvailable = true;
+        let latestShopData = null;
+
         try {
+            // Use the existing subscription-status endpoint
             const response = await axios.get(`${API_URL}/shops/${shopId}/subscription-status`, {
                 timeout: 10000,
                 headers: { 'Content-Type': 'application/json' }
             });
 
-            writeLog(`Server response: ${JSON.stringify(response.data)}`);
+            writeLog(`Server response received`);
 
-            if (response.data && response.data.success) {
-                const { subscriptionStatus } = response.data.data;
+            // Check if response is successful
+            if (response.data && response.data.success === true) {
+                latestShopData = response.data.data;
+                
+                writeLog(`📊 Shop data from server:`);
+                writeLog(`   - Name: ${latestShopData.name}`);
+                writeLog(`   - Status: ${latestShopData.subscriptionStatus}`);
+                writeLog(`   - Shop ID: ${latestShopData.shopId}`);
+                writeLog(`   - Permanent License: ${latestShopData.permanentLicense}`);
+                writeLog(`   - Expiry Date: ${latestShopData.expiryDate || 'N/A'}`);
+                writeLog(`   - Phone No: ${latestShopData.phoneNo || 'N/A'}`);
+                writeLog(`   - Terms Accepted: ${latestShopData.termsPoliciesAccepted || false}`);
+                writeLog(`   - Is Active: ${latestShopData.isActive}`);
+                writeLog(`   - Is Expired: ${latestShopData.isExpired}`);
+                writeLog(`   - Is Suspended: ${latestShopData.isSuspended}`);
 
-                writeLog(`📊 Shop subscription status from server: ${subscriptionStatus}`);
+                // Update local license data with latest shop information
+                const updatedLicenseData = {
+                    ...licenseData,
+                    shop: {
+                        ...licenseData.shop,
+                        // Update with all fields from server
+                        id: latestShopData.id,
+                        shopId: latestShopData.shopId,
+                        name: latestShopData.name,
+                        subscriptionStatus: latestShopData.subscriptionStatus,
+                        expiryDate: latestShopData.expiryDate,
+                        permanentLicense: latestShopData.permanentLicense,
+                        phoneNo: latestShopData.phoneNo || licenseData.shop?.phoneNo,
+                        termsPoliciesAccepted: latestShopData.termsPoliciesAccepted !== undefined 
+                            ? latestShopData.termsPoliciesAccepted 
+                            : licenseData.shop?.termsPoliciesAccepted || false,
+                        // Preserve other local fields if not returned by server
+                        owner: latestShopData.owner || licenseData.shop?.owner,
+                        type: latestShopData.type || licenseData.shop?.type,
+                        city: latestShopData.city || licenseData.shop?.city,
+                        location: latestShopData.location || licenseData.shop?.location,
+                        imageUrl: latestShopData.imageUrl || licenseData.shop?.imageUrl,
+                        discount: latestShopData.discount || licenseData.shop?.discount,
+                        storageUsed: latestShopData.storageUsed || licenseData.shop?.storageUsed,
+                        storageLimit: latestShopData.storageLimit || licenseData.shop?.storageLimit,
+                        totalRevenue: latestShopData.totalRevenue || licenseData.shop?.totalRevenue,
+                        updatedAt: new Date().toISOString()
+                    },
+                    lastSyncedAt: new Date().toISOString()
+                };
 
+                // Save updated license data locally
+                const saveResult = licenseManager.saveLicense(updatedLicenseData);
+                
+                if (saveResult) {
+                    writeLog('✅ Local license data updated with latest server information');
+                    writeLog(`   - Phone No: ${updatedLicenseData.shop.phoneNo || 'Not set'}`);
+                    writeLog(`   - Terms Accepted: ${updatedLicenseData.shop.termsPoliciesAccepted}`);
+                    
+                    // Also update the licenseData variable for current use
+                    Object.assign(licenseData, updatedLicenseData);
+                } else {
+                    writeLog('⚠️ Failed to save updated license data locally', 'WARN');
+                }
+
+                // Check subscription status
+                const subscriptionStatus = latestShopData.subscriptionStatus;
+                
                 if (subscriptionStatus !== 'active') {
                     writeLog(`❌ Shop subscription is ${subscriptionStatus}.`);
-
-                    // Don't clear license here - just return the status
+                    
                     return {
                         isValid: false,
                         reason: subscriptionStatus,
-                        message: `Your subscription has been ${subscriptionStatus}. Please contact support to reactivate.`
+                        message: `Your subscription has been ${subscriptionStatus}. Please contact support to reactivate.`,
+                        shopData: latestShopData
                     };
                 }
 
-                writeLog('✅ Shop subscription is valid');
-                return { isValid: true, status: subscriptionStatus };
+                writeLog('✅ Shop subscription is valid and local data is synced');
+                return { 
+                    isValid: true, 
+                    status: subscriptionStatus,
+                    shopData: latestShopData,
+                    synced: true
+                };
+            } else {
+                writeLog(`⚠️ Server returned unsuccessful response: ${JSON.stringify(response.data)}`, 'WARN');
+                serverAvailable = false;
             }
-
-            return { isValid: false, reason: 'server_error', message: 'Failed to verify subscription' };
 
         } catch (apiError) {
+            serverAvailable = false;
             writeLog(`⚠️ Server API call failed: ${apiError.message}`, 'WARN');
-
-            if (licenseData && licenseManager.isLicenseValid(licenseData)) {
-                writeLog('✅ Local license is valid (server unreachable)');
-                return { isValid: true, status: 'local_fallback' };
+            if (apiError.response) {
+                writeLog(`   - Status: ${apiError.response.status}`, 'WARN');
+                writeLog(`   - Data: ${JSON.stringify(apiError.response.data)}`, 'WARN');
+            } else if (apiError.request) {
+                writeLog(`   - No response received from server`, 'WARN');
+            } else {
+                writeLog(`   - Error: ${apiError.message}`, 'WARN');
             }
-
-            return { isValid: false, reason: 'api_failed', message: 'Could not verify subscription' };
         }
+
+        // If server is unavailable, fall back to local data
+        if (!serverAvailable) {
+            writeLog('🔄 Server unreachable or returned error, falling back to local license data...');
+            
+            if (licenseData && licenseManager.isLicenseValid(licenseData)) {
+                // Check if local data has expiry date
+                const currentLocalShop = licenseData.shop;
+                const isExpired = currentLocalShop?.expiryDate && 
+                                 new Date(currentLocalShop.expiryDate) < new Date() &&
+                                 !currentLocalShop.permanentLicense;
+                
+                if (isExpired) {
+                    writeLog(`⚠️ Local license shows expired on ${new Date(currentLocalShop.expiryDate).toLocaleDateString()}`);
+                    return { 
+                        isValid: false, 
+                        reason: 'expired_local',
+                        message: 'Your subscription has expired. Please connect to internet to verify renewal.',
+                        shopData: currentLocalShop
+                    };
+                }
+                
+                writeLog('✅ Using local license data (server unreachable)');
+                writeLog(`   - Local shop name: ${currentLocalShop?.name}`);
+                writeLog(`   - Local status: ${currentLocalShop?.subscriptionStatus}`);
+                writeLog(`   - Phone No: ${currentLocalShop?.phoneNo || 'Not set'}`);
+                writeLog(`   - Terms Accepted: ${currentLocalShop?.termsPoliciesAccepted || false}`);
+                writeLog(`   - Last synced: ${licenseData.lastSyncedAt || 'Never'}`);
+                
+                return { 
+                    isValid: true, 
+                    status: 'local_fallback',
+                    shopData: currentLocalShop,
+                    synced: false,
+                    serverOffline: true
+                };
+            } else {
+                writeLog('❌ No valid local license found');
+                return { 
+                    isValid: false, 
+                    reason: 'no_valid_local_license',
+                    message: 'No valid subscription found locally and server is unreachable.'
+                };
+            }
+        }
+
+        return { isValid: false, reason: 'verification_failed', message: 'Failed to verify subscription' };
 
     } catch (error) {
         writeLog(`Error verifying subscription: ${error.message}`, 'ERROR');
+        writeLog(`Stack trace: ${error.stack}`, 'DEBUG');
+        
+        // Last resort fallback - check local license
+        try {
+            const licenseData = licenseManager.loadLicense();
+            if (licenseData && licenseManager.isLicenseValid(licenseData)) {
+                writeLog('⚠️ Using local license as fallback due to error');
+                return { 
+                    isValid: true, 
+                    status: 'error_fallback',
+                    shopData: licenseData.shop,
+                    error: error.message
+                };
+            }
+        } catch (fallbackError) {
+            writeLog(`Fallback also failed: ${fallbackError.message}`, 'ERROR');
+        }
+        
         return { isValid: false, reason: 'error', message: error.message };
     }
 }

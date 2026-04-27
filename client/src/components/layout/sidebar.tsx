@@ -87,14 +87,14 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         )}
       >
         {/* Close button */}
-        <div className="flex justify-end p-4 shrink-0">
+        {/* <div className="flex justify-end p-4 shrink-0">
           <button
             onClick={onClose}
             className="rounded-md hover:bg-muted focus:outline-none"
           >
             <X className="h-6 w-6" />
           </button>
-        </div>
+        </div> */}
 
         {/* Logo */}
         <div className="px-6 pb-4 border-b border-border shrink-0">
