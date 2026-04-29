@@ -49,6 +49,14 @@ type ElectronAPI = {
     createSale: (data: any) => Promise<any>;
     updateSale: (id: string, data: any) => Promise<any>;  // Add this line
     getSaleByReceiptNumber: (receiptNumber: string) => Promise<any>;
+    getSalePayments: (saleId: string) => Promise<any[]>;
+    createSalePayment: (paymentData: {
+        saleId: string;
+        amount: number;
+        paymentMethod: string;
+        notes: string;
+        remainingDue: number;
+    }) => Promise<any>;
 
     // Purchases
     getPurchases: () => Promise<any>;
@@ -85,10 +93,21 @@ type ElectronAPI = {
 
     // Dashboard
     getDashboardStats: () => Promise<any>;
+    getDueSales: () => Promise<any[]>;
+    getOverdueSales: () => Promise<any[]>;
+    getPaymentSummary: () => Promise<{
+        totalDue: number;
+        overdueCount: number;
+        upcomingDueCount: number;
+    }>;
 
     // Settings
     getSettings: () => Promise<any>;
     updateSettings: (data: any) => Promise<any>;
+    getShopData: () => Promise<any>;
+    updateShopData: (shopData: any) => Promise<any>;
+    updateLicenseShopData: (shopData: any) => Promise<any>;
+    getShopId: () => Promise<{ shopId: string }>;
 
     // Transaction Logs
     getTransactionLogs: () => Promise<any>;
@@ -97,7 +116,7 @@ type ElectronAPI = {
     getDataLocation: () => Promise<any>;
     backupData: () => Promise<any>;
     openDataFolder: () => Promise<void>;
- wipeDatabase: () => Promise<any>;  // Add this line
+    wipeDatabase: () => Promise<any>;  // Add this line
     // License methods
     activateLicense: (licenseKey: string) => Promise<any>;
     checkLicense: () => Promise<any>;
@@ -178,7 +197,10 @@ const electronAPI: ElectronAPI = {
     getSale: (id) => window.electronAPI.getSaleById(id),
     createSale: (saleData, items) => window.electronAPI.createSale(saleData, items),
     updateSale: (id, data) => window.electronAPI.updateSale(id, data),  // Add this line
-
+    getSalePayments: async (saleId) => {           // ADD THIS
+        const result = await window.electronAPI.getSalePayments(saleId);
+        return result.success ? result.data : [];
+    },
     // Purchases
     getPurchases: () => window.electronAPI.getPurchases(),
     createPurchase: (data) => window.electronAPI.createPurchase(data),
@@ -230,6 +252,52 @@ const electronAPI: ElectronAPI = {
     backupData: () => window.electronAPI.backupData(),
     openDataFolder: () => window.electronAPI.openDataFolder(),
     restartApp: () => window.electronAPI.restartApp(),
+    createSalePayment: async (paymentData) => {
+        const result = await window.electronAPI.createSalePayment(paymentData);
+        return result.success ? result.data : null;
+    },
+
+    // Due Sales
+    getDueSales: async () => {
+        const result = await window.electronAPI.getDueSales();
+        return result.success ? result.data : [];
+    },
+
+    getOverdueSales: async () => {
+        const result = await window.electronAPI.getOverdueSales();
+        return result.success ? result.data : [];
+    },
+
+    getPaymentSummary: async () => {
+        const result = await window.electronAPI.getPaymentSummary();
+        return result.success ? result.data : { totalDue: 0, overdueCount: 0, upcomingDueCount: 0 };
+    },
+
+    // Shop Data
+    getShopData: async () => {
+        const result = await window.electronAPI.getShopData();
+        return result;
+    },
+
+    updateShopData: async (shopData) => {
+        const result = await window.electronAPI.updateShopData(shopData);
+        return result;
+    },
+
+    updateLicenseShopData: async (shopData) => {
+        const result = await window.electronAPI.updateLicenseShopData(shopData);
+        return result;
+    },
+
+    getShopId: async () => {
+        const result = await window.electronAPI.getShopId();
+        return result;
+    },
+
+    syncShopData: async (shopData) => {
+        const result = await window.electronAPI.syncShopData(shopData);
+        return result;
+    },
 
 };
 
@@ -293,7 +361,17 @@ const webAPI: ElectronAPI = {
     // In webAPI object, add:
     getProfitData: (startDate, endDate) => fetch(`/api/profit-dashboard?startDate=${startDate}&endDate=${endDate}`).then(r => r.json()),
     openDataFolder: () => Promise.resolve(),
-     wipeDatabase: async () => ({ success: false, error: 'Not available in web version' }),
+    wipeDatabase: async () => ({ success: false, error: 'Not available in web version' }),
+    getSalePayments: async () => [],
+    createSalePayment: async () => null,
+    getDueSales: async () => [],
+    getOverdueSales: async () => [],
+    getPaymentSummary: async () => ({ totalDue: 0, overdueCount: 0, upcomingDueCount: 0 }),
+    getShopData: async () => ({ success: false, shop: null }),
+    updateShopData: async () => ({ success: false }),
+    updateLicenseShopData: async () => ({ success: false }),
+    getShopId: async () => ({ shopId: null }),
+    syncShopData: async () => ({ success: false }),
     restartApp: async () => {
         console.log('Restart not available in web version');
         window.location.reload(); // Just reload the page for web

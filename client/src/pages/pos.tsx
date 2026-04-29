@@ -100,7 +100,11 @@ export default function Orders() {
 
     // Add this state
     const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
-
+    // Add with your other state variables (around line 100)
+    const [isPartialPayment, setIsPartialPayment] = useState(false);
+    const [partialAmount, setPartialAmount] = useState(0);
+    const [dueDate, setDueDate] = useState("");
+    const [dueReason, setDueReason] = useState("");
     // Add these helper functions (add before your component)
     interface CategoryNode {
         id: string;
@@ -1031,58 +1035,6 @@ export default function Orders() {
     const taxAmount = (subtotal * currentTax) / 100;
     const discountAmount = (subtotal * currentDiscount) / 100;
     const total = subtotal + taxAmount - discountAmount;
-    const handleProcessPayment = () => {
-        if (cart.length === 0) {
-            toast({
-                title: "Cart Empty",
-                description: "Please add items to cart before processing payment",
-                variant: "destructive",
-            });
-            return;
-        }
-
-        const receiptNumber = `RCP-${Date.now()}`;
-        const totalProfit = cart.reduce((sum, item) => sum + item.profit, 0);
-
-        const items = cart.map(item => ({
-            productId: item.id,
-            quantity: item.quantity,
-            unitPrice: parseFloat(item.price),
-            total: item.total.toString(),
-            costPrice: parseFloat(item.cost_price || "0"),
-            profit: item.profit.toString(),
-        }));
-
-        const currentTaxValue = taxEnabled ? (useCustomTax ? customTax : tax) : 0;
-        const currentDiscountValue = discountEnabled ? (useCustomDiscount ? customDiscount : discount) : 0;
-
-        const taxAmountValue = (subtotal * currentTaxValue) / 100;
-        const discountAmountValue = (subtotal * currentDiscountValue) / 100;
-        const totalValue = subtotal + taxAmountValue - discountAmountValue;
-
-        const saleData = {
-            receiptNumber,
-            customerName: customerName || null,
-            customerPhone: customerPhone || null,
-            subtotal: subtotal.toString(),
-            tax: currentTaxValue.toString(),
-            discount: currentDiscountValue.toString(),
-            total: totalValue.toString(),
-            total_profit: totalProfit.toString(),  // Add total profit
-            paymentMethod,
-            paymentStatus,
-            employeeId: employeeId || null,
-            userId: "system",
-            shopId: "default",
-        };
-
-        console.log('Sending saleData:', saleData);
-        console.log('Sending items with profit:', items);
-
-        processSaleMutation.mutate({ saleData, items });
-        localStorage.removeItem('pos_cart');
-    };
-
     // Scanner functions
     const handleScan = (result: any) => {
         if (result?.text) {
@@ -1278,19 +1230,19 @@ export default function Orders() {
         setSubtitle("Point of Sale System");
     }, []);
 
-    // Update your handleProcessReturn function with better calculations
     const handleProcessReturn = async () => {
         let allReturnItems = [...returnedItemsList];
+        let refundAmount = 0;
+        let newDueAmount = 0;
+        let newPaymentStatus = '';
+
         // Add reduced quantity items to return list
         for (const [productId, reducedInfo] of reducedItemsMap.entries()) {
             const cartItem = cart.find(item => item.id === productId);
             if (cartItem && reducedInfo.returnQuantity > 0) {
-                // Use profit_per_unit from the cart item
                 const profitPerUnit = cartItem.profit_per_unit ||
                     (parseFloat(cartItem.price) - parseFloat(cartItem.cost_price || "0"));
                 const profitLoss = profitPerUnit * reducedInfo.returnQuantity;
-
-                console.log(`Returning ${reducedInfo.returnQuantity} of ${cartItem.name}, profit per unit: ${profitPerUnit}, total loss: ${profitLoss}`);
 
                 allReturnItems.push({
                     ...cartItem,
@@ -1314,11 +1266,8 @@ export default function Orders() {
         }
 
         const returnSubtotal = allReturnItems.reduce((sum, item) => sum + item.total, 0);
-
-        // Calculate total loss (profit that is being returned, NOT the selling price)
         const totalLoss = allReturnItems.reduce((sum, item) => sum + (item.profit_loss || 0), 0);
 
-        // Calculate return fee
         let returnFee = 0;
         if (returnFeeType === "percentage") {
             returnFee = (returnSubtotal * returnFeeValue) / 100;
@@ -1330,7 +1279,6 @@ export default function Orders() {
         const returnReceiptNumber = `RET-${Date.now()}`;
         const originalSaleId = isManualReturn ? `manual-${Date.now()}` : searchedSale?.id;
 
-        // Prepare return items for database
         const returnItems = allReturnItems.map(item => ({
             productId: item.id,
             quantity: item.quantity,
@@ -1349,7 +1297,7 @@ export default function Orders() {
             discount: discount.toString(),
             returnFee: returnFee.toString(),
             total: returnTotal.toString(),
-            total_loss: totalLoss.toString(), // This is the profit being lost
+            total_loss: totalLoss.toString(),
             isManualReturn: isManualReturn,
             returnReason: returnReason || "Product return",
             paymentMethod: paymentMethod,
@@ -1363,20 +1311,16 @@ export default function Orders() {
             if (result && searchedSale && !isManualReturn) {
                 // Get current items from the sale
                 let currentSaleItems = searchedSale.items || [];
-
-                // Create a map of items being returned from both sources
                 const returningItemsMap = new Map();
                 allReturnItems.forEach(item => {
                     returningItemsMap.set(item.id, item.quantity);
                 });
 
-                // Update the sale items - remove returned quantities
                 const updatedSaleItems = [];
                 let totalReturnedAmountThisTransaction = 0;
 
                 for (const saleItem of currentSaleItems) {
                     const returningQty = returningItemsMap.get(saleItem.product_id);
-
                     if (returningQty) {
                         if (returningQty >= saleItem.quantity) {
                             totalReturnedAmountThisTransaction += parseFloat(saleItem.total);
@@ -1384,7 +1328,6 @@ export default function Orders() {
                             const newQuantity = saleItem.quantity - returningQty;
                             const newTotal = newQuantity * parseFloat(saleItem.unit_price);
                             totalReturnedAmountThisTransaction += returningQty * parseFloat(saleItem.unit_price);
-
                             updatedSaleItems.push({
                                 product_id: saleItem.product_id,
                                 quantity: newQuantity,
@@ -1402,7 +1345,7 @@ export default function Orders() {
                     }
                 }
 
-                // Get existing returned items from the sale (preserve history)
+                // Get existing returned items history
                 let existingReturnedItems = [];
                 try {
                     if (searchedSale.returned_items) {
@@ -1417,7 +1360,7 @@ export default function Orders() {
                     existingReturnedItems = [];
                 }
 
-                // APPEND current return to existing history
+                // Append current return to history
                 const newReturnedItems = [
                     ...existingReturnedItems,
                     {
@@ -1441,28 +1384,90 @@ export default function Orders() {
                 const newDiscountAmount = (newSubtotal * parseFloat(searchedSale.discount)) / 100;
                 const newTotal = newSubtotal + newTaxAmount - newDiscountAmount;
 
-                // Calculate new profit (original profit minus the profit loss from returned items)
+                // Calculate new profit
                 const originalProfit = parseFloat(searchedSale.total_profit) || 0;
-                const newProfit = originalProfit - totalLoss; // Subtract ONLY the profit, not the selling price
+                const newProfit = originalProfit - totalLoss;
 
                 const previouslyReturned = parseFloat(searchedSale.total_returned_amount || 0);
                 const returnStatus = updatedSaleItems.length === 0 ? 'full' : 'partial';
 
-                // Update the sale with both metadata AND items
+                // ============ CORRECT REFUND CALCULATION ============
+                const originalPaidAmount = parseFloat(searchedSale.paid_amount) || 0;
+                const originalDueAmount = parseFloat(searchedSale.due_amount) || 0;
+
+                // Calculate total value of all items returned so far (including current)
+                const totalReturnedValueSoFar = previouslyReturned + totalReturnedAmountThisTransaction;
+
+                let newPaidAmount = originalPaidAmount;
+                let newDueAmountCalculated = 0;
+
+                if (totalReturnedValueSoFar >= originalPaidAmount) {
+                    // Customer has returned more than or equal to what they paid
+                    // Shop owes customer the full paid amount
+                    refundAmount = originalPaidAmount;
+                    newDueAmountCalculated = -refundAmount;
+                    newPaymentStatus = 'refunded';
+                    newPaidAmount = 0;
+                } else {
+                    // Customer has returned less than what they paid
+                    // Customer still owes the remaining balance
+                    newDueAmountCalculated = originalPaidAmount - totalReturnedValueSoFar;
+                    newPaymentStatus = newDueAmountCalculated > 0 ? 'partial' : 'completed';
+                    refundAmount = 0;
+                    newPaidAmount = originalPaidAmount;
+                }
+
+                // Also consider if there was previous refund pending
+                if (originalDueAmount < 0) {
+                    // Already had a refund pending, add to it
+                    const existingRefund = Math.abs(originalDueAmount);
+                    refundAmount = originalPaidAmount;
+                    newDueAmountCalculated = -(existingRefund + (originalPaidAmount - totalReturnedValueSoFar > 0 ? 0 : originalPaidAmount));
+                }
+
+                console.log('💰 Return Financial Calculations:', {
+                    originalPaidAmount,
+                    totalReturnedValueSoFar,
+                    refundAmount,
+                    newDueAmountCalculated,
+                    newPaymentStatus,
+                    isFullReturn: updatedSaleItems.length === 0
+                });
+
+                // Update the sale
                 await api.updateSale(originalSaleId, {
                     items: updatedSaleItems,
                     subtotal: newSubtotal,
                     total: newTotal,
-                    total_profit: newProfit, // Update the profit
+                    total_profit: newProfit,
                     return_status: returnStatus,
-                    total_returned_amount: previouslyReturned + totalReturnedAmountThisTransaction,
-                    returned_items: JSON.stringify(newReturnedItems)
+                    total_returned_amount: totalReturnedValueSoFar,
+                    returned_items: JSON.stringify(newReturnedItems),
+                    paid_amount: newPaidAmount,
+                    due_amount: newDueAmountCalculated,
+                    payment_status: newPaymentStatus
                 });
+
+                // Record refund if needed
+                if (refundAmount > 0) {
+                    await api.createSalePayment({
+                        saleId: originalSaleId,
+                        amount: -refundAmount,
+                        paymentMethod: 'refund',
+                        notes: `Refund due to product return. Return receipt: ${returnReceiptNumber}. Total returned value: ${totalReturnedValueSoFar}, Customer paid: ${originalPaidAmount}, Refund: ${refundAmount}`,
+                        remainingDue: 0
+                    });
+
+                    toast({
+                        title: "Refund Created",
+                        description: `Customer paid ${formatPKR(originalPaidAmount)}, returned ${formatPKR(totalReturnedValueSoFar)}. Refund amount: ${formatPKR(refundAmount)}`,
+                    });
+                }
             }
 
             toast({
                 title: "Return Processed",
-                description: `${allReturnItems.length} item(s) returned successfully. Profit decreased by ${formatPKR(totalLoss)}`,
+                description: `${allReturnItems.length} item(s) returned successfully.`,
             });
 
             // Reset state
@@ -1486,6 +1491,103 @@ export default function Orders() {
                 description: error.message,
                 variant: "destructive",
             });
+        }
+    };
+
+
+    const handleProcessPayment = async () => {
+        if (cart.length === 0) {
+            toast({ title: "Cart Empty", description: "Please add items", variant: "destructive" });
+            return;
+        }
+
+        const receiptNumber = `RCP-${Date.now()}`;
+        const totalProfit = cart.reduce((sum, item) => sum + item.profit, 0);
+        const currentTaxValue = taxEnabled ? (useCustomTax ? customTax : tax) : 0;
+        const currentDiscountValue = discountEnabled ? (useCustomDiscount ? customDiscount : discount) : 0;
+        const taxAmountValue = (subtotal * currentTaxValue) / 100;
+        const discountAmountValue = (subtotal * currentDiscountValue) / 100;
+        const totalValue = subtotal + taxAmountValue - discountAmountValue;
+
+        // Calculate payment amounts
+        let paidAmount = totalValue;
+        let dueAmount = 0;
+        let paymentStatusFinal = paymentStatus;
+
+        if (isOrderMode && paymentStatus === "partial") {
+            paidAmount = partialAmount;
+            dueAmount = totalValue - partialAmount;
+            paymentStatusFinal = "partial";
+
+            if (dueAmount < 0) {
+                toast({ title: "Invalid Amount", description: "Paid amount cannot exceed total", variant: "destructive" });
+                return;
+            }
+
+            if (!dueDate) {
+                toast({ title: "Due Date Required", description: "Please set a due date for partial payment", variant: "destructive" });
+                return;
+            }
+        } else if (isOrderMode && paymentStatus === "pending") {
+            paidAmount = 0;
+            dueAmount = totalValue;
+            paymentStatusFinal = "pending";
+        }
+
+        const items = cart.map(item => ({
+            productId: item.id,
+            quantity: item.quantity,
+            unitPrice: parseFloat(item.price),
+            total: item.total.toString(),
+            costPrice: parseFloat(item.cost_price || "0"),
+            profit: item.profit.toString(),
+        }));
+
+        const saleData = {
+            receiptNumber,
+            customerName: customerName || null,
+            customerPhone: customerPhone || null,
+            subtotal: subtotal.toString(),
+            tax: currentTaxValue.toString(),
+            discount: currentDiscountValue.toString(),
+            total: totalValue.toString(),
+            total_profit: totalProfit.toString(),
+            paymentMethod,
+            paymentStatus: paymentStatusFinal,
+            paid_amount: paidAmount,
+            due_amount: dueAmount,
+            due_date: dueDate || null,
+            due_reason: dueReason || null,
+            employeeId: employeeId || null,
+            userId: "system",
+            shopId: "default",
+        };
+
+        try {
+            const result = await processSaleMutation.mutateAsync({ saleData, items });
+
+            // Record initial payment if partial
+            if (paymentStatusFinal === "partial" && paidAmount > 0) {
+                await api.createSalePayment({
+                    saleId: result.id,
+                    amount: paidAmount,
+                    paymentMethod: paymentMethod,
+                    notes: `Initial payment recorded at sale time. Due: ${dueReason || 'Not specified'}`,
+                    remainingDue: dueAmount
+                });
+            }
+
+            if (paymentStatusFinal === "partial") {
+                toast({
+                    title: "Partial Payment Recorded",
+                    description: `Paid: ${formatPKR(paidAmount)} | Due: ${formatPKR(dueAmount)} by ${new Date(dueDate).toLocaleDateString()}`,
+                    duration: 5000,
+                });
+            }
+
+            localStorage.removeItem('pos_cart');
+        } catch (error) {
+            console.error("Payment failed:", error);
         }
     };
 
@@ -1692,46 +1794,56 @@ export default function Orders() {
                                 <div className="col-span-full text-center py-8">
                                     <p className="text-muted-foreground">No products found</p>
                                 </div>
-                            ) : (
+                            ) : // Product Grid - Update the Card component
                                 products
                                     .filter((product: any) => product.is_active === 1)
-                                    .map((product: any) => (
-                                        <Card
-                                            key={product.id}
-                                            className="cursor-pointer hover:shadow-md transition-shadow"
-                                            onClick={() => addToCart(product)}
-                                            data-testid={`product-card-${product.id}`}
-                                        >
-                                            <CardContent className="p-4">
-                                                <div className="w-full h-32 bg-muted rounded-lg mb-3 flex items-center justify-center overflow-hidden">
-                                                    {product.image_url ? (
-                                                        <img
-                                                            src={product.image_url}
-                                                            alt={product.name}
-                                                            className="w-full h-full object-cover rounded-lg"
-                                                        />
-                                                    ) : (
-                                                        <div className="flex items-center justify-center text-muted-foreground">
-                                                            <span className="text-sm">No Image</span>
-                                                        </div>
-                                                    )}
-                                                </div>
+                                    .map((product: any) => {
+                                        const isOutOfStock = product.stock === 0;
+                                        return (
+                                            <Card
+                                                key={product.id}
+                                                className={`cursor-pointer hover:shadow-md transition-shadow ${isOutOfStock ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                onClick={() => !isOutOfStock && addToCart(product)}
+                                                data-testid={`product-card-${product.id}`}
+                                            >
+                                                <CardContent className="p-4">
+                                                    <div className="w-full h-32 bg-muted rounded-lg mb-3 flex items-center justify-center overflow-hidden">
+                                                        {product.image_url ? (
+                                                            <img
+                                                                src={product.image_url}
+                                                                alt={product.name}
+                                                                className="w-full h-full object-cover rounded-lg"
+                                                            />
+                                                        ) : (
+                                                            <div className="flex items-center justify-center text-muted-foreground">
+                                                                <span className="text-sm">No Image</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
 
-                                                <h3 className="font-medium text-sm mb-1 line-clamp-2">{product.name}</h3>
-                                                <p className="text-primary font-semibold">{formatPKR(product.selling_price)}</p>
+                                                    <h3 className="font-medium text-sm mb-1 line-clamp-2">{product.name}</h3>
+                                                    <p className="text-primary font-semibold">{formatPKR(product.selling_price)}</p>
 
-                                                <div className="flex items-center justify-between mt-2">
-                                                    <p className="text-xs text-muted-foreground">Stock: {product.stock}</p>
-                                                    {product.stock <= product.min_stock && (
-                                                        <Badge variant="destructive" className="text-xs">
-                                                            Low
-                                                        </Badge>
-                                                    )}
-                                                </div>
-                                            </CardContent>
-                                        </Card>
-                                    ))
-                            )}
+                                                    <div className="flex items-center justify-between mt-2">
+                                                        <p className={`text-xs ${product.stock === 0 ? 'text-red-600 font-bold' : 'text-muted-foreground'}`}>
+                                                            Stock: {product.stock}
+                                                        </p>
+                                                        {product.stock === 0 && (
+                                                            <Badge variant="destructive" className="text-sm">
+                                                                Out of Stock
+                                                            </Badge>
+                                                        )}
+                                                        {product.stock > 0 && product.stock <= product.min_stock && (
+                                                            <Badge variant="destructive" className="text-xs">
+                                                                Low Stock
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                </CardContent>
+                                            </Card>
+                                        );
+                                    })
+                            }
                         </div>
 
                         {/* Pagination */}
@@ -2106,45 +2218,97 @@ export default function Orders() {
                                     </Select>
                                 </div>
                                 {isOrderMode && (
-                                    <div className="mt-4">
-                                        <label className="block text-sm font-medium text-muted-foreground mb-2">
-                                            Salesman
-                                        </label>
-                                        <Select value={employeeId} onValueChange={setEmployeeId}>
-                                            <SelectTrigger>
-                                                <SelectValue placeholder="Select Salesman" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {salesman.map((emp: any) => (
-                                                    <SelectItem key={emp.id} value={emp.id}>
-                                                        {emp.name}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
+                                    <div className="space-y-4 mt-4 p-4 border rounded-lg bg-muted/20">
+                                        <h3 className="font-semibold">Order Settings</h3>
+
+                                        {/* Salesman Selection */}
+                                        <div>
+                                            <label className="block text-sm font-medium text-muted-foreground mb-2">
+                                                Salesman
+                                            </label>
+                                            <Select value={employeeId} onValueChange={setEmployeeId}>
+                                                <SelectTrigger>
+                                                    <SelectValue placeholder="Select Salesman" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {salesman.map((emp: any) => (
+                                                        <SelectItem key={emp.id} value={emp.id}>{emp.name}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        {/* Payment Status with Partial Option */}
+                                        <div>
+                                            <label className="block text-sm font-medium text-muted-foreground mb-2">
+                                                Payment Status
+                                            </label>
+                                            <Select value={paymentStatus} onValueChange={(value) => {
+                                                setPaymentStatus(value);
+                                                if (value === "partial") {
+                                                    setIsPartialPayment(true);
+                                                } else {
+                                                    setIsPartialPayment(false);
+                                                    setPartialAmount(0);
+                                                    setDueDate("");
+                                                    setDueReason("");
+                                                }
+                                            }}>
+                                                <SelectTrigger>
+                                                    <SelectValue placeholder="Select Payment Status" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="completed">✅ Completed (Full Payment)</SelectItem>
+                                                    <SelectItem value="partial">⚠️ Partial Payment</SelectItem>
+                                                    <SelectItem value="pending">⏳ Pending (No Payment)</SelectItem>
+                                                    <SelectItem value="cancelled">❌ Cancelled</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        {/* Partial Payment Details */}
+                                        {isPartialPayment && (
+                                            <div className="space-y-3 p-3 border-l-4 border-yellow-500 bg-yellow-50/30 rounded">
+                                                <p className="text-sm font-medium text-yellow-700">Partial Payment Details</p>
+
+                                                <div>
+                                                    <label className="text-sm">Amount Paid Today</label>
+                                                    <Input
+                                                        type="number"
+                                                        value={partialAmount}
+                                                        onChange={(e) => setPartialAmount(parseFloat(e.target.value) || 0)}
+                                                        placeholder="Enter amount customer is paying now"
+                                                        className="mt-1"
+                                                    />
+                                                    <p className="text-xs text-muted-foreground mt-1">
+                                                        Due amount will be: {formatPKR(Math.max(0, total - partialAmount))}
+                                                    </p>
+                                                </div>
+
+                                                <div>
+                                                    <label className="text-sm">Due Date</label>
+                                                    <Input
+                                                        type="date"
+                                                        value={dueDate}
+                                                        onChange={(e) => setDueDate(e.target.value)}
+                                                        className="mt-1"
+                                                    />
+                                                </div>
+
+                                                <div>
+                                                    <label className="text-sm">Due Reason (Optional)</label>
+                                                    <Textarea
+                                                        value={dueReason}
+                                                        onChange={(e) => setDueReason(e.target.value)}
+                                                        placeholder="e.g., Customer promised to pay on Friday, Credit sale, etc."
+                                                        className="mt-1"
+                                                        rows={2}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
-
-                                {
-                                    isOrderMode && <div className="mt-4">
-                                        <label className="block text-sm font-medium text-muted-foreground mb-2">
-                                            Payment Status
-                                        </label>
-                                        <Select value={paymentStatus} onValueChange={setPaymentStatus}>
-                                            <SelectTrigger>
-                                                <SelectValue placeholder="Select Payment Status" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {["completed", "pending", "cancelled"].map((status) => (
-                                                    <SelectItem key={status} value={status}>
-                                                        {status.charAt(0).toUpperCase() + status.slice(1)}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                }
-
 
                                 {isReturnMode ? (
                                     <Button

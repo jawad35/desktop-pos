@@ -1096,6 +1096,16 @@ export function setupIpcHandlers() {
 
             console.log('Items count:', items.length);
 
+            // Get payments for sale (only for sales, not returns)
+            let payments = [];
+            if (type === 'sale') {
+                payments = db.prepare(`
+                SELECT * FROM sale_payments 
+                WHERE sale_id = ? 
+                ORDER BY payment_date DESC
+            `).all(id);
+            }
+
             // Format items
             const formattedItems = items.map(item => ({
                 id: item.id,
@@ -1116,7 +1126,12 @@ export function setupIpcHandlers() {
                 success: true,
                 data: {
                     ...record,
-                    items: formattedItems
+                    items: formattedItems,
+                    payments: payments,
+                    paid_amount: record.paid_amount || 0,
+                    due_amount: record.due_amount || 0,
+                    due_date: record.due_date,
+                    due_reason: record.due_reason
                 }
             };
 
@@ -1184,18 +1199,30 @@ export function setupIpcHandlers() {
         try {
             db.exec('BEGIN TRANSACTION');
 
-            // Ensure total_profit column exists
+            // Ensure columns exist
             try {
                 db.exec(`ALTER TABLE sales ADD COLUMN total_profit DECIMAL(10,2) DEFAULT 0`);
             } catch (error) { }
+            try {
+                db.exec(`ALTER TABLE sales ADD COLUMN paid_amount DECIMAL(10,2) DEFAULT 0`);
+            } catch (error) { }
+            try {
+                db.exec(`ALTER TABLE sales ADD COLUMN due_amount DECIMAL(10,2) DEFAULT 0`);
+            } catch (error) { }
+            try {
+                db.exec(`ALTER TABLE sales ADD COLUMN due_date DATE`);
+            } catch (error) { }
+            try {
+                db.exec(`ALTER TABLE sales ADD COLUMN due_reason TEXT`);
+            } catch (error) { }
 
-            // Insert sale with profit
+            // Insert sale with all fields
             const saleStmt = db.prepare(`
             INSERT INTO sales (
                 id, receipt_number, customer_name, customer_phone, subtotal, tax, discount, 
                 total, total_profit, payment_method, account_number, payment_status, 
-                employee_id, user_id, shop_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                employee_id, user_id, shop_id, paid_amount, due_amount, due_date, due_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
             saleStmt.run(
@@ -1203,10 +1230,14 @@ export function setupIpcHandlers() {
                 saleData.subtotal, saleData.tax || 0, saleData.discount || 0,
                 saleData.total, saleData.total_profit || 0, saleData.paymentMethod || 'cash',
                 saleData.accountNumber, saleData.paymentStatus || 'completed',
-                saleData.employeeId, saleData.userId, saleData.shopId
+                saleData.employeeId, saleData.userId, saleData.shopId,
+                saleData.paid_amount || 0,      // ADD THIS
+                saleData.due_amount || 0,       // ADD THIS
+                saleData.due_date || null,      // ADD THIS
+                saleData.due_reason || null     // ADD THIS
             );
 
-            // Insert sale items with profit
+            // Insert sale items
             const itemStmt = db.prepare(`
             INSERT INTO sale_items (id, sale_id, product_id, quantity, unit_price, total, profit) 
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1216,14 +1247,31 @@ export function setupIpcHandlers() {
 
             for (const item of items) {
                 const itemId = crypto.randomUUID();
-                const profitPerItem = parseFloat(item.profit) / item.quantity;
-
-                // Store each item's profit (total profit for this line item)
                 itemStmt.run(
                     itemId, id, item.productId, item.quantity,
                     item.unitPrice, item.total, item.profit || 0
                 );
                 updateStock.run(item.quantity, item.productId);
+            }
+
+            // Record initial payment if partial payment
+            if (saleData.paymentStatus === 'partial' && saleData.paid_amount > 0) {
+                try {
+                    const paymentStmt = db.prepare(`
+                    INSERT INTO sale_payments (id, sale_id, amount, payment_method, notes, remaining_due)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                `);
+                    paymentStmt.run(
+                        crypto.randomUUID(),
+                        id,
+                        saleData.paid_amount,
+                        saleData.paymentMethod || 'cash',
+                        'Initial payment recorded at sale time',
+                        saleData.due_amount || 0
+                    );
+                } catch (error) {
+                    console.log('Error recording initial payment:', error.message);
+                }
             }
 
             db.exec('COMMIT');
@@ -1244,19 +1292,16 @@ export function setupIpcHandlers() {
         try {
             const db = getDb();
 
-            // Ensure total_profit column exists (migration)
+            // Ensure columns exist
             try {
-                db.exec(`ALTER TABLE sales ADD COLUMN total_profit DECIMAL(10,2) DEFAULT 0`);
-                console.log('✅ Added total_profit column to sales table');
-            } catch (error) {
-                if (!error.message.includes('duplicate column name')) {
-                    console.error('Error adding total_profit column:', error);
-                }
-            }
+                db.exec(`ALTER TABLE sales ADD COLUMN paid_amount DECIMAL(10,2) DEFAULT 0`);
+                db.exec(`ALTER TABLE sales ADD COLUMN due_amount DECIMAL(10,2) DEFAULT 0`);
+                db.exec(`ALTER TABLE sales ADD COLUMN due_date DATE`);
+                db.exec(`ALTER TABLE sales ADD COLUMN due_reason TEXT`);
+            } catch (error) { }
 
             // Start transaction
             const transaction = db.transaction(() => {
-                // Update sales table
                 const updates = [];
                 const params = [];
 
@@ -1276,7 +1321,7 @@ export function setupIpcHandlers() {
                     updates.push('total = ?');
                     params.push(saleData.total);
                 }
-                if (saleData.total_profit !== undefined) {  // Add this
+                if (saleData.total_profit !== undefined) {
                     updates.push('total_profit = ?');
                     params.push(saleData.total_profit);
                 }
@@ -1292,6 +1337,23 @@ export function setupIpcHandlers() {
                     updates.push('returned_items = ?');
                     params.push(saleData.returned_items);
                 }
+                // ADD THESE:
+                if (saleData.paid_amount !== undefined) {
+                    updates.push('paid_amount = ?');
+                    params.push(saleData.paid_amount);
+                }
+                if (saleData.due_amount !== undefined) {
+                    updates.push('due_amount = ?');
+                    params.push(saleData.due_amount);
+                }
+                if (saleData.due_date !== undefined) {
+                    updates.push('due_date = ?');
+                    params.push(saleData.due_date);
+                }
+                if (saleData.due_reason !== undefined) {
+                    updates.push('due_reason = ?');
+                    params.push(saleData.due_reason);
+                }
 
                 if (updates.length > 0) {
                     updates.push('updated_at = CURRENT_TIMESTAMP');
@@ -1302,30 +1364,19 @@ export function setupIpcHandlers() {
 
                 // Update sale_items if provided
                 if (saleData.items !== undefined && Array.isArray(saleData.items)) {
-                    // First, delete all existing items for this sale
                     db.prepare('DELETE FROM sale_items WHERE sale_id = ?').run(id);
-
-                    // Then insert the updated items
                     const insertStmt = db.prepare(`
                     INSERT INTO sale_items (id, sale_id, product_id, quantity, unit_price, total)
                     VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, ?)
                 `);
-
                     for (const item of saleData.items) {
-                        insertStmt.run(
-                            id,
-                            item.product_id,
-                            item.quantity,
-                            item.unit_price,
-                            item.total
-                        );
+                        insertStmt.run(id, item.product_id, item.quantity, item.unit_price, item.total);
                     }
                 }
             });
 
             transaction();
 
-            // Fetch and return updated sale with items
             const updatedSale = db.prepare('SELECT * FROM sales WHERE id = ?').get(id);
             const updatedItems = db.prepare(`
             SELECT si.*, p.name as product_name, p.barcode 
@@ -1336,9 +1387,7 @@ export function setupIpcHandlers() {
 
             updatedSale.items = updatedItems;
 
-            console.log("🔍 [IPC] Updated sale with items:", updatedSale);
             return { success: true, data: updatedSale };
-
         } catch (error) {
             console.error("🔍 [IPC] Error in updateSale:", error);
             return { success: false, error: error.message };
@@ -2683,6 +2732,163 @@ export function setupIpcHandlers() {
                 message: 'Unable to verify subscription. Please check your internet connection.',
                 hasLicense: !!licenseData
             };
+        }
+    });
+
+    // ========== SALE PAYMENTS (Partial Payments) ==========
+    ipcMain.handle('db:getSalePayments', async (event, saleId) => {
+        try {
+            const db = getDb();
+            const payments = db.prepare(`
+            SELECT * FROM sale_payments 
+            WHERE sale_id = ? 
+            ORDER BY payment_date DESC
+        `).all(saleId);
+            return { success: true, data: payments };
+        } catch (error) {
+            console.error('Error getting sale payments:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('db:createSalePayment', async (event, paymentData) => {
+        try {
+            const db = getDb();
+            const id = crypto.randomUUID();
+
+            const stmt = db.prepare(`
+            INSERT INTO sale_payments (id, sale_id, amount, payment_method, notes, remaining_due, payment_date)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        `);
+
+            stmt.run(
+                id,
+                paymentData.saleId,
+                paymentData.amount,
+                paymentData.paymentMethod,
+                paymentData.notes || null,
+                paymentData.remainingDue
+            );
+
+            return { success: true, data: { id } };
+        } catch (error) {
+            console.error('Error creating sale payment:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // ========== DUE SALES ==========
+    ipcMain.handle('db:getDueSales', async () => {
+        try {
+            const db = getDb();
+            const dueSales = db.prepare(`
+            SELECT * FROM sales 
+            WHERE payment_status = 'partial' 
+            AND due_amount > 0
+            ORDER BY due_date ASC
+        `).all();
+            return { success: true, data: dueSales };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('db:getOverdueSales', async () => {
+        try {
+            const db = getDb();
+            const overdueSales = db.prepare(`
+            SELECT * FROM sales 
+            WHERE payment_status = 'partial' 
+            AND due_amount > 0 
+            AND due_date < date('now')
+            ORDER BY due_date ASC
+        `).all();
+            return { success: true, data: overdueSales };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('db:getPaymentSummary', async () => {
+        try {
+            const db = getDb();
+            const summary = db.prepare(`
+            SELECT 
+                COALESCE(SUM(due_amount), 0) as totalDue,
+                COUNT(CASE WHEN due_date < date('now') AND due_amount > 0 THEN 1 END) as overdueCount,
+                COUNT(CASE WHEN due_date >= date('now') AND due_amount > 0 THEN 1 END) as upcomingDueCount
+            FROM sales 
+            WHERE payment_status = 'partial'
+        `).get();
+            return { success: true, data: summary };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    // ========== SHOP DATA ==========
+    ipcMain.handle('shop:updateData', async (event, shopData) => {
+        try {
+            // Store in local storage or secure storage
+            const { secureStorage } = require('./secureStorage');
+            await secureStorage.set('shopData', JSON.stringify(shopData));
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('license:updateShopData', async (event, shopData) => {
+        try {
+            const licenseData = licenseManager.loadLicense();
+            if (licenseData) {
+                const updatedLicenseData = {
+                    ...licenseData,
+                    shop: {
+                        ...licenseData.shop,
+                        ...shopData,
+                        updatedAt: new Date().toISOString()
+                    },
+                    lastSyncedAt: new Date().toISOString()
+                };
+                licenseManager.saveLicense(updatedLicenseData);
+            }
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('shop:getId', async () => {
+        try {
+            const licenseData = licenseManager.loadLicense();
+            const shopId = licenseData?.shop?.shopId || licenseData?.shop?.id || null;
+            return { shopId };
+        } catch (error) {
+            return { shopId: null };
+        }
+    });
+
+    ipcMain.handle('shop:syncData', async (event, shopData) => {
+        try {
+            // Sync shop data to both storage systems
+            const { secureStorage } = require('./secureStorage');
+            await secureStorage.set('shopData', JSON.stringify(shopData));
+
+            const licenseData = licenseManager.loadLicense();
+            if (licenseData) {
+                const updatedLicenseData = {
+                    ...licenseData,
+                    shop: {
+                        ...licenseData.shop,
+                        ...shopData
+                    }
+                };
+                licenseManager.saveLicense(updatedLicenseData);
+            }
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
         }
     });
 

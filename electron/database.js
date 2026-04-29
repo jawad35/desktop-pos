@@ -167,7 +167,6 @@ function createAllTables(db) {
         )
     `);
 
-    // 8. Sales table
     // 8. Sales table - add returned_items column
     db.exec(`
     CREATE TABLE IF NOT EXISTS sales (
@@ -193,6 +192,8 @@ function createAllTables(db) {
         FOREIGN KEY (employee_id) REFERENCES employees(id)
     )
 `);
+
+
 
     db.exec(`CREATE INDEX IF NOT EXISTS idx_sales_receipt ON sales(receipt_number)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at)`);

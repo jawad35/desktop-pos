@@ -438,6 +438,48 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveBackupConfig: (config) => ipcRenderer.invoke('backup:saveConfig', config),
     uploadNow: () => ipcRenderer.invoke('backup:uploadNow'),
     wipeDatabase: () => ipcRenderer.invoke('wipe-database'),
+    // Add to preload.js - inside contextBridge.exposeInMainWorld
+
+    // ========== SALE PAYMENTS (Partial Payments) ==========
+    getSalePayments: async (saleId) => {
+        const result = await ipcRenderer.invoke('db:getSalePayments', saleId);
+        return result;
+    },
+    createSalePayment: async (paymentData) => {
+        const result = await ipcRenderer.invoke('db:createSalePayment', paymentData);
+        return result;
+    },
+
+    // ========== DUE SALES ==========
+    getDueSales: async () => {
+        const result = await ipcRenderer.invoke('db:getDueSales');
+        return result;
+    },
+    getOverdueSales: async () => {
+        const result = await ipcRenderer.invoke('db:getOverdueSales');
+        return result;
+    },
+    getPaymentSummary: async () => {
+        const result = await ipcRenderer.invoke('db:getPaymentSummary');
+        return result;
+    },
+
+    // ========== SHOP DATA ==========
+    getShopData: async () => {
+        return await ipcRenderer.invoke('license:getShop');
+    },
+    updateShopData: async (shopData) => {
+        return await ipcRenderer.invoke('shop:updateData', shopData);
+    },
+    updateLicenseShopData: async (shopData) => {
+        return await ipcRenderer.invoke('license:updateShopData', shopData);
+    },
+    getShopId: async () => {
+        return await ipcRenderer.invoke('shop:getId');
+    },
+    syncShopData: async (shopData) => {
+        return await ipcRenderer.invoke('shop:syncData', shopData);
+    },
 
     restartApp: async () => {
         return await ipcRenderer.invoke('app:restart');
