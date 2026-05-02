@@ -95,9 +95,10 @@ export default function Orders() {
     const [hasModifiedQuantities, setHasModifiedQuantities] = useState(false);
     // Add this with your other state variables
     const [reducedItemsMap, setReducedItemsMap] = useState<Map<string, { originalQuantity: number; returnQuantity: number }>>(new Map());
-    // Add these with your other state variables
     // Add these imports
-
+    const [showShopOweDialog, setShowShopOweDialog] = useState(false);
+    const [shopOweAmount, setShopOweAmount] = useState(0);
+    const [pendingReturnData, setPendingReturnData] = useState<any>(null);
     // Add this state
     const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
     // Add with your other state variables (around line 100)
@@ -112,6 +113,36 @@ export default function Orders() {
         parent_id: string | null;
         children: CategoryNode[];
     }
+
+    // Calculate if shop owes customer (for returns)
+    // Calculate if shop owes customer (for returns)
+    const calculateShopOwe = (sale: any, returnAmount: number) => {
+        if (!sale) return 0;
+
+        // Calculate total paid by customer from payments
+        const totalPaid = sale.payments?.reduce((sum: number, p: any) => {
+            if (p.amount > 0) return sum + p.amount;
+            return sum;
+        }, 0) || parseFloat(sale.paid_amount) || 0;
+
+        // Total already returned amount
+        const alreadyReturned = parseFloat(sale.total_returned_amount) || 0;
+
+        // New total returned after this return
+        const newTotalReturned = alreadyReturned + returnAmount;
+
+        // Effective sale total (sale total minus returns)
+        const saleTotal = parseFloat(sale.total) || 0;
+        const effectiveTotal = saleTotal - newTotalReturned;
+
+        // Customer has paid X, after returns effective total is Y
+        // If paid > effective total, shop owes customer the difference
+        if (totalPaid > effectiveTotal) {
+            return totalPaid - effectiveTotal;
+        }
+
+        return 0;
+    };
 
     const buildCategoryTree = (categories: any[]): CategoryNode[] => {
         const categoryMap = new Map<string, CategoryNode>();
@@ -275,6 +306,9 @@ export default function Orders() {
             });
         }
     }, []);
+
+    // Auto-return single item when only one item in cart during return mode
+
 
     const handleReturnModeToggle = () => {
         if (isOrderMode) {
@@ -895,34 +929,35 @@ export default function Orders() {
         },
     });
 
-    const processSaleMutation = useMutation({
-        mutationFn: async ({ saleData, items }: { saleData: any; items: any[] }) => {
-            // Don't update stock here - let the main process handle it
-            const result = await api.createSale(saleData, items);
-            if (!result?.success && !result?.id) {
-                throw new Error(result?.error || "Failed to process sale");
-            }
-            return result;
-        },
-        onSuccess: () => {
-            toast({
-                title: "Sale Completed",
-                description: "Transaction processed successfully",
-            });
-            setCart([]);
-            setCustomerName("");
-            setCustomerPhone("");
-            queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-            queryClient.invalidateQueries({ queryKey: ["paginate-products"] });
-        },
-        onError: (error: Error) => {
-            toast({
-                title: "Sale Failed",
-                description: error.message,
-                variant: "destructive",
-            });
-        },
-    });
+  const processSaleMutation = useMutation({
+    mutationFn: async ({ saleData, items }: { saleData: any; items: any[] }) => {
+        const result = await api.createSale(saleData, items);
+        console.log('Sale creation result:', result);
+        if (!result?.success && !result?.id) {
+            throw new Error(result?.error || "Failed to process sale");
+        }
+        // Return the full result with id
+        return result;
+    },
+    onSuccess: (result) => {
+        toast({
+            title: "Sale Completed",
+            description: "Transaction processed successfully",
+        });
+        setCart([]);
+        setCustomerName("");
+        setCustomerPhone("");
+        queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+        queryClient.invalidateQueries({ queryKey: ["paginate-products"] });
+    },
+    onError: (error: Error) => {
+        toast({
+            title: "Sale Failed",
+            description: error.message,
+            variant: "destructive",
+        });
+    },
+});
 
     const addToCart = (product: any) => {
         const existingItem = cart.find(item => item.id === product.id);
@@ -1230,366 +1265,500 @@ export default function Orders() {
         setSubtitle("Point of Sale System");
     }, []);
 
-    const handleProcessReturn = async () => {
-        let allReturnItems = [...returnedItemsList];
-        let refundAmount = 0;
-        let newDueAmount = 0;
-        let newPaymentStatus = '';
 
-        // Add reduced quantity items to return list
-        for (const [productId, reducedInfo] of reducedItemsMap.entries()) {
-            const cartItem = cart.find(item => item.id === productId);
-            if (cartItem && reducedInfo.returnQuantity > 0) {
-                const profitPerUnit = cartItem.profit_per_unit ||
-                    (parseFloat(cartItem.price) - parseFloat(cartItem.cost_price || "0"));
-                const profitLoss = profitPerUnit * reducedInfo.returnQuantity;
 
-                allReturnItems.push({
-                    ...cartItem,
-                    quantity: reducedInfo.returnQuantity,
-                    total: reducedInfo.returnQuantity * parseFloat(cartItem.price),
-                    profit_loss: profitLoss,
-                    returnReason: returnReason || "Product return",
-                    returnDate: new Date().toISOString(),
-                    imageUrl: cartItem.imageUrl
-                });
-            }
-        }
+  const handleProcessReturn = async () => {
+    let allReturnItems = [...returnedItemsList];
+    let refundAmount = 0;
+    let newDueAmount = 0;
+    let newPaymentStatus = '';
 
-        if (allReturnItems.length === 0) {
-            toast({
-                title: "No Items to Return",
-                description: "Please select items to return or reduce quantity first",
-                variant: "destructive",
-            });
-            return;
-        }
+    // If there's a single item in cart with quantity 1 and nothing selected yet, auto-add it
+    if (cart.length === 1 && cart[0].quantity === 1 && allReturnItems.length === 0 && !hasModifiedQuantities) {
+        const singleItem = cart[0];
+        const profitPerUnit = singleItem.profit_per_unit ||
+            (parseFloat(singleItem.price) - parseFloat(singleItem.cost_price || "0"));
+        const profitLoss = profitPerUnit * singleItem.quantity;
 
-        const returnSubtotal = allReturnItems.reduce((sum, item) => sum + item.total, 0);
-        const totalLoss = allReturnItems.reduce((sum, item) => sum + (item.profit_loss || 0), 0);
-
-        let returnFee = 0;
-        if (returnFeeType === "percentage") {
-            returnFee = (returnSubtotal * returnFeeValue) / 100;
-        } else {
-            returnFee = returnFeeValue;
-        }
-
-        const returnTotal = returnSubtotal - returnFee;
-        const returnReceiptNumber = `RET-${Date.now()}`;
-        const originalSaleId = isManualReturn ? `manual-${Date.now()}` : searchedSale?.id;
-
-        const returnItems = allReturnItems.map(item => ({
-            productId: item.id,
-            quantity: item.quantity,
-            unitPrice: parseFloat(item.price),
-            total: item.total.toString(),
-            profit_loss: item.profit_loss || 0,
-        }));
-
-        const returnData = {
-            receiptNumber: returnReceiptNumber,
-            originalSaleId: originalSaleId,
-            customerName: customerName || searchedSale?.customerName || "Walk-in Customer",
-            customerPhone: customerPhone || searchedSale?.customerPhone || "N/A",
-            subtotal: returnSubtotal.toString(),
-            tax: tax.toString(),
-            discount: discount.toString(),
-            returnFee: returnFee.toString(),
-            total: returnTotal.toString(),
-            total_loss: totalLoss.toString(),
-            isManualReturn: isManualReturn,
+        allReturnItems.push({
+            ...singleItem,
+            profit_loss: profitLoss,
             returnReason: returnReason || "Product return",
-            paymentMethod: paymentMethod,
-            userId: "system",
-            shopId: "default",
-        };
+            returnDate: new Date().toISOString(),
+            imageUrl: singleItem.imageUrl
+        });
 
-        try {
-            const result = await processReturnMutation.mutateAsync({ returnData, items: returnItems });
+        setCart([]);
+        toast({
+            title: "Item Selected",
+            description: `${singleItem.name} will be returned.`,
+            duration: 2000,
+        });
+    }
 
-            if (result && searchedSale && !isManualReturn) {
-                // Get current items from the sale
-                let currentSaleItems = searchedSale.items || [];
-                const returningItemsMap = new Map();
-                allReturnItems.forEach(item => {
-                    returningItemsMap.set(item.id, item.quantity);
-                });
+    // Add reduced quantity items to return list
+    for (const [productId, reducedInfo] of reducedItemsMap.entries()) {
+        const cartItem = cart.find(item => item.id === productId);
+        if (cartItem && reducedInfo.returnQuantity > 0) {
+            const profitPerUnit = cartItem.profit_per_unit ||
+                (parseFloat(cartItem.price) - parseFloat(cartItem.cost_price || "0"));
+            const profitLoss = profitPerUnit * reducedInfo.returnQuantity;
 
-                const updatedSaleItems = [];
-                let totalReturnedAmountThisTransaction = 0;
+            allReturnItems.push({
+                ...cartItem,
+                quantity: reducedInfo.returnQuantity,
+                total: reducedInfo.returnQuantity * parseFloat(cartItem.price),
+                profit_loss: profitLoss,
+                returnReason: returnReason || "Product return",
+                returnDate: new Date().toISOString(),
+                imageUrl: cartItem.imageUrl
+            });
+        }
+    }
 
-                for (const saleItem of currentSaleItems) {
-                    const returningQty = returningItemsMap.get(saleItem.product_id);
-                    if (returningQty) {
-                        if (returningQty >= saleItem.quantity) {
-                            totalReturnedAmountThisTransaction += parseFloat(saleItem.total);
-                        } else {
-                            const newQuantity = saleItem.quantity - returningQty;
-                            const newTotal = newQuantity * parseFloat(saleItem.unit_price);
-                            totalReturnedAmountThisTransaction += returningQty * parseFloat(saleItem.unit_price);
-                            updatedSaleItems.push({
-                                product_id: saleItem.product_id,
-                                quantity: newQuantity,
-                                unit_price: saleItem.unit_price,
-                                total: newTotal.toString()
-                            });
-                        }
+    if (allReturnItems.length === 0) {
+        toast({
+            title: "No Items to Return",
+            description: "Please select items to return or reduce quantity first",
+            variant: "destructive",
+        });
+        return;
+    }
+
+    // Calculate return subtotal (value of items being returned)
+    const returnSubtotal = allReturnItems.reduce((sum, item) => sum + item.total, 0);
+    const totalLoss = allReturnItems.reduce((sum, item) => sum + (item.profit_loss || 0), 0);
+
+    // Get original sale's tax and discount rates
+    const originalTaxRate = parseFloat(searchedSale?.tax) || 0;
+    const originalDiscountRate = parseFloat(searchedSale?.discount) || 0;
+    const originalSaleTotal = parseFloat(searchedSale?.total) || 0;
+    const originalSubtotal = parseFloat(searchedSale?.subtotal) || 0;
+    
+    // Calculate tax and discount amounts for the returned items
+    // Tax and discount are applied to subtotal, so we need to calculate proportionally
+    const returnTaxAmount = (returnSubtotal * originalTaxRate) / 100;
+    const returnDiscountAmount = (returnSubtotal * originalDiscountRate) / 100;
+    
+    // Total return value including tax (what customer paid for these items)
+    const returnTotal = returnSubtotal + returnTaxAmount - returnDiscountAmount;
+    
+    // Apply return fee if any
+    let returnFee = 0;
+    if (returnFeeType === "percentage") {
+        returnFee = (returnTotal * returnFeeValue) / 100;
+    } else {
+        returnFee = returnFeeValue;
+    }
+    
+    const finalReturnTotal = returnTotal - returnFee;
+    const returnReceiptNumber = `RET-${Date.now()}`;
+    const originalSaleId = isManualReturn ? `manual-${Date.now()}` : searchedSale?.id;
+
+    // Get original payment data
+    const originalPaidAmount = parseFloat(searchedSale?.paid_amount) || 0;
+    const previouslyReturned = parseFloat(searchedSale?.total_returned_amount) || 0;
+
+    // Calculate total return value including this return
+    const totalReturnedValueSoFar = Math.min(previouslyReturned + finalReturnTotal, originalSaleTotal);
+
+    // Calculate value of items customer kept after this return
+    const keptItemsValue = originalSaleTotal - totalReturnedValueSoFar;
+
+    // Calculate net position
+    const netPosition = originalPaidAmount - keptItemsValue;
+
+    let finalPaidAmount = originalPaidAmount;
+    let finalDueAmount = 0;
+
+    if (netPosition > 0) {
+        // Customer overpaid, shop owes refund
+        refundAmount = netPosition;
+        finalPaidAmount = keptItemsValue;
+        finalDueAmount = 0;
+        newPaymentStatus = 'completed';
+        console.log(`💰 Customer overpaid by ${refundAmount}. Refund due.`);
+    } else if (netPosition < 0) {
+        // Customer still owes money
+        refundAmount = 0;
+        finalPaidAmount = originalPaidAmount;
+        finalDueAmount = Math.abs(netPosition);
+        newPaymentStatus = finalDueAmount > 0 ? 'partial' : 'completed';
+        console.log(`⚠️ Customer still owes ${finalDueAmount}`);
+    } else {
+        // Exactly balanced
+        refundAmount = 0;
+        finalPaidAmount = originalPaidAmount;
+        finalDueAmount = 0;
+        newPaymentStatus = 'completed';
+        console.log(`✓ Perfectly balanced`);
+    }
+
+    console.log('💰 Return Financial Calculations:', {
+        originalSaleTotal,
+        originalSubtotal,
+        originalPaidAmount,
+        returnSubtotal,
+        returnTaxAmount,
+        returnDiscountAmount,
+        returnTotal: finalReturnTotal,
+        previouslyReturned,
+        totalReturnedValueSoFar,
+        keptItemsValue,
+        netPosition,
+        refundAmount,
+        finalDueAmount,
+        newPaymentStatus,
+    });
+
+    // Prepare return items
+    const returnItems = allReturnItems.map(item => ({
+        productId: item.id,
+        quantity: item.quantity,
+        unitPrice: parseFloat(item.price),
+        total: item.total.toString(),
+        profit_loss: item.profit_loss || 0,
+    }));
+
+    const returnData = {
+        receiptNumber: returnReceiptNumber,
+        originalSaleId: originalSaleId,
+        customerName: customerName || searchedSale?.customerName || "Walk-in Customer",
+        customerPhone: customerPhone || searchedSale?.customerPhone || "N/A",
+        subtotal: returnSubtotal.toString(),
+        tax: originalTaxRate.toString(),
+        discount: originalDiscountRate.toString(),
+        tax_amount: returnTaxAmount.toString(),
+        discount_amount: returnDiscountAmount.toString(),
+        returnFee: returnFee.toString(),
+        total: finalReturnTotal.toString(),
+        total_loss: totalLoss.toString(),
+        isManualReturn: isManualReturn,
+        returnReason: returnReason || "Product return",
+        paymentMethod: paymentMethod,
+        userId: "system",
+        shopId: "default",
+    };
+
+    // If shop owes customer, show confirmation dialog
+    if (refundAmount > 0) {
+        setPendingReturnData({
+            allReturnItems,
+            returnTotal: finalReturnTotal,
+            totalLoss,
+            returnReceiptNumber,
+            originalSaleId,
+            returnItems,
+            returnData,
+            finalPaidAmount,
+            finalDueAmount,
+            newPaymentStatus,
+            refundAmount,
+            totalReturnedValueSoFar,
+            returnTaxAmount,
+            returnDiscountAmount
+        });
+        setShopOweAmount(refundAmount);
+        setShowShopOweDialog(true);
+        return;
+    }
+
+    // No refund needed, process return directly
+    await processReturnTransaction({
+        allReturnItems,
+        returnTotal: finalReturnTotal,
+        totalLoss,
+        returnReceiptNumber,
+        originalSaleId,
+        returnItems,
+        returnData,
+        finalPaidAmount,
+        finalDueAmount,
+        newPaymentStatus,
+        refundAmount,
+        totalReturnedValueSoFar,
+        returnTaxAmount,
+        returnDiscountAmount
+    });
+};
+
+    // Separate function to process the return transaction
+    // Separate function to process the return transaction
+const processReturnTransaction = async (data: any) => {
+    try {
+        const result = await processReturnMutation.mutateAsync({
+            returnData: data.returnData,
+            items: data.returnItems
+        });
+
+        if (result && searchedSale && !isManualReturn) {
+            // Get current items from the sale
+            let currentSaleItems = searchedSale.items || [];
+            const returningItemsMap = new Map();
+            data.allReturnItems.forEach((item: any) => {
+                returningItemsMap.set(item.id, item.quantity);
+            });
+
+            const updatedSaleItems = [];
+            let totalReturnedAmountThisTransaction = 0;
+
+            for (const saleItem of currentSaleItems) {
+                const returningQty = returningItemsMap.get(saleItem.product_id);
+                if (returningQty) {
+                    if (returningQty >= saleItem.quantity) {
+                        totalReturnedAmountThisTransaction += parseFloat(saleItem.total);
                     } else {
+                        const newQuantity = saleItem.quantity - returningQty;
+                        const newTotal = newQuantity * parseFloat(saleItem.unit_price);
+                        totalReturnedAmountThisTransaction += returningQty * parseFloat(saleItem.unit_price);
                         updatedSaleItems.push({
                             product_id: saleItem.product_id,
-                            quantity: saleItem.quantity,
+                            quantity: newQuantity,
                             unit_price: saleItem.unit_price,
-                            total: saleItem.total
+                            total: newTotal.toString()
                         });
                     }
-                }
-
-                // Get existing returned items history
-                let existingReturnedItems = [];
-                try {
-                    if (searchedSale.returned_items) {
-                        if (typeof searchedSale.returned_items === 'string') {
-                            existingReturnedItems = JSON.parse(searchedSale.returned_items);
-                        } else if (Array.isArray(searchedSale.returned_items)) {
-                            existingReturnedItems = searchedSale.returned_items;
-                        }
-                    }
-                } catch (e) {
-                    console.error('Failed to parse existing returned_items:', e);
-                    existingReturnedItems = [];
-                }
-
-                // Append current return to history
-                const newReturnedItems = [
-                    ...existingReturnedItems,
-                    {
-                        returnReceiptNumber: returnReceiptNumber,
-                        returnDate: new Date().toISOString(),
-                        returnReason: returnReason || "Product return",
-                        returnFee: returnFee,
-                        items: allReturnItems.map(item => ({
-                            productId: item.id,
-                            productName: item.name,
-                            quantity: item.quantity,
-                            unitPrice: parseFloat(item.price),
-                            total: item.total
-                        }))
-                    }
-                ];
-
-                // Calculate new totals
-                const newSubtotal = updatedSaleItems.reduce((sum, item) => sum + parseFloat(item.total), 0);
-                const newTaxAmount = (newSubtotal * parseFloat(searchedSale.tax)) / 100;
-                const newDiscountAmount = (newSubtotal * parseFloat(searchedSale.discount)) / 100;
-                const newTotal = newSubtotal + newTaxAmount - newDiscountAmount;
-
-                // Calculate new profit
-                const originalProfit = parseFloat(searchedSale.total_profit) || 0;
-                const newProfit = originalProfit - totalLoss;
-
-                const previouslyReturned = parseFloat(searchedSale.total_returned_amount || 0);
-                const returnStatus = updatedSaleItems.length === 0 ? 'full' : 'partial';
-
-                // ============ CORRECT REFUND CALCULATION ============
-                const originalPaidAmount = parseFloat(searchedSale.paid_amount) || 0;
-                const originalDueAmount = parseFloat(searchedSale.due_amount) || 0;
-
-                // Calculate total value of all items returned so far (including current)
-                const totalReturnedValueSoFar = previouslyReturned + totalReturnedAmountThisTransaction;
-
-                let newPaidAmount = originalPaidAmount;
-                let newDueAmountCalculated = 0;
-
-                if (totalReturnedValueSoFar >= originalPaidAmount) {
-                    // Customer has returned more than or equal to what they paid
-                    // Shop owes customer the full paid amount
-                    refundAmount = originalPaidAmount;
-                    newDueAmountCalculated = -refundAmount;
-                    newPaymentStatus = 'refunded';
-                    newPaidAmount = 0;
                 } else {
-                    // Customer has returned less than what they paid
-                    // Customer still owes the remaining balance
-                    newDueAmountCalculated = originalPaidAmount - totalReturnedValueSoFar;
-                    newPaymentStatus = newDueAmountCalculated > 0 ? 'partial' : 'completed';
-                    refundAmount = 0;
-                    newPaidAmount = originalPaidAmount;
-                }
-
-                // Also consider if there was previous refund pending
-                if (originalDueAmount < 0) {
-                    // Already had a refund pending, add to it
-                    const existingRefund = Math.abs(originalDueAmount);
-                    refundAmount = originalPaidAmount;
-                    newDueAmountCalculated = -(existingRefund + (originalPaidAmount - totalReturnedValueSoFar > 0 ? 0 : originalPaidAmount));
-                }
-
-                console.log('💰 Return Financial Calculations:', {
-                    originalPaidAmount,
-                    totalReturnedValueSoFar,
-                    refundAmount,
-                    newDueAmountCalculated,
-                    newPaymentStatus,
-                    isFullReturn: updatedSaleItems.length === 0
-                });
-
-                // Update the sale
-                await api.updateSale(originalSaleId, {
-                    items: updatedSaleItems,
-                    subtotal: newSubtotal,
-                    total: newTotal,
-                    total_profit: newProfit,
-                    return_status: returnStatus,
-                    total_returned_amount: totalReturnedValueSoFar,
-                    returned_items: JSON.stringify(newReturnedItems),
-                    paid_amount: newPaidAmount,
-                    due_amount: newDueAmountCalculated,
-                    payment_status: newPaymentStatus
-                });
-
-                // Record refund if needed
-                if (refundAmount > 0) {
-                    await api.createSalePayment({
-                        saleId: originalSaleId,
-                        amount: -refundAmount,
-                        paymentMethod: 'refund',
-                        notes: `Refund due to product return. Return receipt: ${returnReceiptNumber}. Total returned value: ${totalReturnedValueSoFar}, Customer paid: ${originalPaidAmount}, Refund: ${refundAmount}`,
-                        remainingDue: 0
-                    });
-
-                    toast({
-                        title: "Refund Created",
-                        description: `Customer paid ${formatPKR(originalPaidAmount)}, returned ${formatPKR(totalReturnedValueSoFar)}. Refund amount: ${formatPKR(refundAmount)}`,
+                    updatedSaleItems.push({
+                        product_id: saleItem.product_id,
+                        quantity: saleItem.quantity,
+                        unit_price: saleItem.unit_price,
+                        total: saleItem.total
                     });
                 }
             }
 
-            toast({
-                title: "Return Processed",
-                description: `${allReturnItems.length} item(s) returned successfully.`,
-            });
+            // Get existing returned items history
+            let existingReturnedItems = [];
+            try {
+                if (searchedSale.returned_items) {
+                    if (typeof searchedSale.returned_items === 'string') {
+                        existingReturnedItems = JSON.parse(searchedSale.returned_items);
+                    } else if (Array.isArray(searchedSale.returned_items)) {
+                        existingReturnedItems = searchedSale.returned_items;
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to parse existing returned_items:', e);
+                existingReturnedItems = [];
+            }
 
-            // Reset state
-            setCart([]);
-            setReturnedItemsList([]);
-            setReducedItemsMap(new Map());
-            setHasModifiedQuantities(false);
-            setCustomerName("");
-            setCustomerPhone("");
-            setReturnReceiptNumber("");
-            setReturnReason("");
-            setSearchedSale(null);
-            setIsReturnMode(false);
-            queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-            queryClient.invalidateQueries({ queryKey: ["sales"] });
+            // Append current return to history
+            const newReturnedItems = [
+                ...existingReturnedItems,
+                {
+                    returnReceiptNumber: data.returnReceiptNumber,
+                    returnDate: new Date().toISOString(),
+                    returnReason: returnReason || "Product return",
+                    returnFee: data.returnData.returnFee,
+                    items: data.allReturnItems.map((item: any) => ({
+                        productId: item.id,
+                        productName: item.name,
+                        quantity: item.quantity,
+                        unitPrice: parseFloat(item.price),
+                        total: item.total
+                    }))
+                }
+            ];
 
-        } catch (error) {
-            console.error("Return processing error:", error);
-            toast({
-                title: "Return Failed",
-                description: error.message,
-                variant: "destructive",
-            });
+            // Calculate new totals for remaining items
+            const newSubtotal = updatedSaleItems.reduce((sum, item) => sum + parseFloat(item.total), 0);
+            const newTaxAmount = (newSubtotal * parseFloat(searchedSale.tax)) / 100;
+            const newDiscountAmount = (newSubtotal * parseFloat(searchedSale.discount)) / 100;
+            const newTotal = newSubtotal + newTaxAmount - newDiscountAmount;
+
+            // Calculate new profit
+            const originalProfit = parseFloat(searchedSale.total_profit) || 0;
+            const newProfit = originalProfit - data.totalLoss;
+
+            // Determine return status
+            const returnStatus = updatedSaleItems.length === 0 ? 'full' : 'partial';
+
+            // Update the sale
+           // In processReturnTransaction, when updating the sale:
+await api.updateSale(data.originalSaleId, {
+    items: updatedSaleItems,
+    subtotal: newSubtotal,
+    tax: searchedSale.tax,  // Keep original tax rate
+    discount: searchedSale.discount,  // Keep original discount rate
+    // Subtract the returned tax and discount from the totals
+    total: newTotal,
+    total_profit: newProfit,
+    return_status: returnStatus,
+    total_returned_amount: data.totalReturnedValueSoFar,
+    returned_items: JSON.stringify(newReturnedItems),
+    paid_amount: data.finalPaidAmount,
+    due_amount: data.finalDueAmount,
+    payment_status: data.newPaymentStatus
+});
+            // Record refund if needed (shop owes customer)
+            if (data.refundAmount > 0) {
+                await api.createSalePayment({
+                    saleId: data.originalSaleId,
+                    amount: -data.refundAmount,
+                    paymentMethod: 'cash',
+                    notes: `Refund due to product return. Return receipt: ${data.returnReceiptNumber}. Total returned value: ${data.totalReturnedValueSoFar}, Customer paid: ${parseFloat(searchedSale.paid_amount) || 0}, Refund: ${data.refundAmount}`,
+                    remainingDue: 0
+                });
+
+                toast({
+                    title: "Refund Processed",
+                    description: `Refund of ${formatPKR(data.refundAmount)} given to customer.`,
+                });
+            } else if (data.finalDueAmount > 0) {
+                toast({
+                    title: "Return Processed",
+                    description: `Items returned. Customer still owes ${formatPKR(data.finalDueAmount)}.`,
+                });
+            } else {
+                toast({
+                    title: "Return Processed",
+                    description: `${data.allReturnItems.length} item(s) returned successfully.`,
+                });
+            }
         }
-    };
+
+        // Reset state
+        setCart([]);
+        setReturnedItemsList([]);
+        setReducedItemsMap(new Map());
+        setHasModifiedQuantities(false);
+        setCustomerName("");
+        setCustomerPhone("");
+        setReturnReceiptNumber("");
+        setReturnReason("");
+        setSearchedSale(null);
+        setIsReturnMode(false);
+        queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+        queryClient.invalidateQueries({ queryKey: ["sales"] });
+        queryClient.invalidateQueries({ queryKey: ["returns"] });
+
+    } catch (error) {
+        console.error("Return processing error:", error);
+        toast({
+            title: "Return Failed",
+            description: error.message,
+            variant: "destructive",
+        });
+    }
+};
 
 
-    const handleProcessPayment = async () => {
-        if (cart.length === 0) {
-            toast({ title: "Cart Empty", description: "Please add items", variant: "destructive" });
+   const handleProcessPayment = async () => {
+    if (cart.length === 0) {
+        toast({ title: "Cart Empty", description: "Please add items", variant: "destructive" });
+        return;
+    }
+
+    const receiptNumber = `RCP-${Date.now()}`;
+    const totalProfit = cart.reduce((sum, item) => sum + item.profit, 0);
+    const currentTaxValue = taxEnabled ? (useCustomTax ? customTax : tax) : 0;
+    const currentDiscountValue = discountEnabled ? (useCustomDiscount ? customDiscount : discount) : 0;
+    const taxAmountValue = (subtotal * currentTaxValue) / 100;
+    const discountAmountValue = (subtotal * currentDiscountValue) / 100;
+    const totalValue = subtotal + taxAmountValue - discountAmountValue;
+
+    let paidAmount = totalValue;
+    let dueAmount = 0;
+    let paymentStatusFinal = paymentStatus;
+
+    if (isOrderMode && paymentStatus === "partial") {
+        paidAmount = partialAmount;
+        dueAmount = totalValue - partialAmount;
+        paymentStatusFinal = "partial";
+
+        if (dueAmount < 0) {
+            toast({ title: "Invalid Amount", description: "Paid amount cannot exceed total", variant: "destructive" });
             return;
         }
 
-        const receiptNumber = `RCP-${Date.now()}`;
-        const totalProfit = cart.reduce((sum, item) => sum + item.profit, 0);
-        const currentTaxValue = taxEnabled ? (useCustomTax ? customTax : tax) : 0;
-        const currentDiscountValue = discountEnabled ? (useCustomDiscount ? customDiscount : discount) : 0;
-        const taxAmountValue = (subtotal * currentTaxValue) / 100;
-        const discountAmountValue = (subtotal * currentDiscountValue) / 100;
-        const totalValue = subtotal + taxAmountValue - discountAmountValue;
-
-        // Calculate payment amounts
-        let paidAmount = totalValue;
-        let dueAmount = 0;
-        let paymentStatusFinal = paymentStatus;
-
-        if (isOrderMode && paymentStatus === "partial") {
-            paidAmount = partialAmount;
-            dueAmount = totalValue - partialAmount;
-            paymentStatusFinal = "partial";
-
-            if (dueAmount < 0) {
-                toast({ title: "Invalid Amount", description: "Paid amount cannot exceed total", variant: "destructive" });
-                return;
-            }
-
-            if (!dueDate) {
-                toast({ title: "Due Date Required", description: "Please set a due date for partial payment", variant: "destructive" });
-                return;
-            }
-        } else if (isOrderMode && paymentStatus === "pending") {
-            paidAmount = 0;
-            dueAmount = totalValue;
-            paymentStatusFinal = "pending";
+        if (!dueDate) {
+            toast({ title: "Due Date Required", description: "Please set a due date for partial payment", variant: "destructive" });
+            return;
         }
+    } else if (isOrderMode && paymentStatus === "pending") {
+        paidAmount = 0;
+        dueAmount = totalValue;
+        paymentStatusFinal = "pending";
+    }
 
-        const items = cart.map(item => ({
-            productId: item.id,
-            quantity: item.quantity,
-            unitPrice: parseFloat(item.price),
-            total: item.total.toString(),
-            costPrice: parseFloat(item.cost_price || "0"),
-            profit: item.profit.toString(),
-        }));
+    const items = cart.map(item => ({
+        productId: item.id,
+        quantity: item.quantity,
+        unitPrice: parseFloat(item.price),
+        total: item.total.toString(),
+        costPrice: parseFloat(item.cost_price || "0"),
+        profit: item.profit.toString(),
+    }));
 
-        const saleData = {
-            receiptNumber,
-            customerName: customerName || null,
-            customerPhone: customerPhone || null,
-            subtotal: subtotal.toString(),
-            tax: currentTaxValue.toString(),
-            discount: currentDiscountValue.toString(),
-            total: totalValue.toString(),
-            total_profit: totalProfit.toString(),
-            paymentMethod,
-            paymentStatus: paymentStatusFinal,
-            paid_amount: paidAmount,
-            due_amount: dueAmount,
-            due_date: dueDate || null,
-            due_reason: dueReason || null,
-            employeeId: employeeId || null,
-            userId: "system",
-            shopId: "default",
-        };
-
-        try {
-            const result = await processSaleMutation.mutateAsync({ saleData, items });
-
-            // Record initial payment if partial
-            if (paymentStatusFinal === "partial" && paidAmount > 0) {
-                await api.createSalePayment({
-                    saleId: result.id,
-                    amount: paidAmount,
-                    paymentMethod: paymentMethod,
-                    notes: `Initial payment recorded at sale time. Due: ${dueReason || 'Not specified'}`,
-                    remainingDue: dueAmount
-                });
-            }
-
-            if (paymentStatusFinal === "partial") {
-                toast({
-                    title: "Partial Payment Recorded",
-                    description: `Paid: ${formatPKR(paidAmount)} | Due: ${formatPKR(dueAmount)} by ${new Date(dueDate).toLocaleDateString()}`,
-                    duration: 5000,
-                });
-            }
-
-            localStorage.removeItem('pos_cart');
-        } catch (error) {
-            console.error("Payment failed:", error);
-        }
+    const saleData = {
+        receiptNumber,
+        customerName: customerName || null,
+        customerPhone: customerPhone || null,
+        subtotal: subtotal.toString(),
+        tax: currentTaxValue.toString(),
+        discount: currentDiscountValue.toString(),
+        total: totalValue.toString(),
+        total_profit: totalProfit.toString(),
+        paymentMethod,
+        paymentStatus: paymentStatusFinal,
+        paid_amount: paidAmount,
+        due_amount: dueAmount,
+        due_date: dueDate || null,
+        due_reason: dueReason || null,
+        employeeId: employeeId || null,
+        userId: "system",
+        shopId: "default",
     };
+
+    try {
+        const result = await processSaleMutation.mutateAsync({ saleData, items });
+        
+        // Get the sale ID from the result (it could be in result.data.id or result.id)
+        const saleId = result?.data?.id || result?.id;
+        
+        console.log('Sale created with ID:', saleId);
+        
+        // ALWAYS record payment for cash sales (both completed AND partial)
+        if (paymentMethod === 'cash' && paidAmount > 0 && saleId) {
+            await api.createSalePayment({
+                saleId: saleId,
+                amount: paidAmount,
+                paymentMethod: paymentMethod,
+                notes: paymentStatusFinal === 'completed' 
+                    ? 'Full payment received' 
+                    : `Initial payment recorded at sale time. Due: ${dueReason || 'Not specified'}`,
+                remainingDue: dueAmount,
+                payment_date: new Date().toISOString()
+            });
+            console.log('Payment recorded successfully');
+        } else if (paymentMethod === 'cash' && paidAmount > 0 && !saleId) {
+            console.error('Cannot record payment: saleId is missing', result);
+        }
+
+        if (paymentStatusFinal === "partial") {
+            toast({
+                title: "Partial Payment Recorded",
+                description: `Paid: ${formatPKR(paidAmount)} | Due: ${formatPKR(dueAmount)} by ${new Date(dueDate).toLocaleDateString()}`,
+                duration: 5000,
+            });
+        } else {
+            toast({
+                title: "Sale Completed",
+                description: "Transaction processed successfully",
+            });
+        }
+
+        localStorage.removeItem('pos_cart');
+        setCart([]);
+        setCustomerName("");
+        setCustomerPhone("");
+        
+    } catch (error) {
+        console.error("Payment failed:", error);
+        toast({ title: "Payment Failed", description: error.message, variant: "destructive" });
+    }
+};
 
     return (
         <div className="flex-1 flex flex-col overflow-hidden">
@@ -2085,17 +2254,18 @@ export default function Orders() {
                                         <span className="data-table font-medium">{formatPKR(subtotal)}</span>
                                     </div>
 
-                                    {/* Tax Section */}
+                                    {/* Tax Section - Disabled during return */}
                                     <div className="flex justify-between text-sm items-center flex-wrap gap-2">
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <input
                                                 type="checkbox"
-                                                checked={taxEnabled}
+                                                checked={taxEnabled && !isReturnMode}
                                                 onChange={(e) => setTaxEnabled(e.target.checked)}
                                                 className="h-4 w-4 rounded border-gray-300"
+                                                disabled={isReturnMode}
                                             />
                                             <span className="text-muted-foreground">Tax:</span>
-                                            {taxEnabled && (
+                                            {taxEnabled && !isReturnMode && (
                                                 <div className="flex items-center gap-1">
                                                     <input
                                                         type="number"
@@ -2110,31 +2280,37 @@ export default function Orders() {
                                                         }}
                                                         className="w-16 px-1 py-0.5 text-sm border rounded"
                                                         step="0.1"
+                                                        disabled={isReturnMode}
                                                     />
                                                     <span className="text-xs">%</span>
                                                     <button
                                                         onClick={() => setUseCustomTax(!useCustomTax)}
                                                         className="text-xs text-primary hover:underline"
+                                                        disabled={isReturnMode}
                                                     >
                                                         {useCustomTax ? "Reset" : "Custom"}
                                                     </button>
                                                 </div>
                                             )}
+                                            {isReturnMode && (
+                                                <span className="text-xs text-muted-foreground">(Disabled during return)</span>
+                                            )}
                                         </div>
-                                        <span className="data-table">{formatPKR(taxAmount)}</span>
+                                        <span className="data-table">{isReturnMode ? formatPKR(0) : formatPKR(taxAmount)}</span>
                                     </div>
 
-                                    {/* Discount Section */}
+                                    {/* Discount Section - Disabled during return */}
                                     <div className="flex justify-between text-sm items-center flex-wrap gap-2">
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <input
                                                 type="checkbox"
-                                                checked={discountEnabled}
+                                                checked={discountEnabled && !isReturnMode}
                                                 onChange={(e) => setDiscountEnabled(e.target.checked)}
                                                 className="h-4 w-4 rounded border-gray-300"
+                                                disabled={isReturnMode}
                                             />
                                             <span className="text-muted-foreground">Discount:</span>
-                                            {discountEnabled && (
+                                            {discountEnabled && !isReturnMode && (
                                                 <div className="flex items-center gap-1">
                                                     <input
                                                         type="number"
@@ -2149,19 +2325,26 @@ export default function Orders() {
                                                         }}
                                                         className="w-16 px-1 py-0.5 text-sm border rounded"
                                                         step="0.1"
+                                                        disabled={isReturnMode}
                                                     />
                                                     <span className="text-xs">%</span>
                                                     <button
                                                         onClick={() => setUseCustomDiscount(!useCustomDiscount)}
                                                         className="text-xs text-primary hover:underline"
+                                                        disabled={isReturnMode}
                                                     >
                                                         {useCustomDiscount ? "Reset" : "Custom"}
                                                     </button>
                                                 </div>
                                             )}
+                                            {isReturnMode && (
+                                                <span className="text-xs text-muted-foreground">(Disabled during return)</span>
+                                            )}
                                         </div>
-                                        <span className="data-table text-destructive">-{formatPKR(discountAmount)}</span>
+                                        <span className="data-table text-destructive">{isReturnMode ? formatPKR(0) : `-${formatPKR(discountAmount)}`}</span>
                                     </div>
+
+
 
                                     <div className="flex justify-between font-semibold text-base md:text-lg border-t border-border pt-2">
                                         <span>Total:</span>
@@ -2315,18 +2498,27 @@ export default function Orders() {
                                         className="w-full mt-4"
                                         onClick={handleProcessReturn}
                                         disabled={
-                                            (returnedItemsList.length === 0 && !hasModifiedQuantities) ||  // No items selected and no quantity modifications
-                                            processReturnMutation.isPending ||  // Already processing
-                                            (searchedSale?.return_status === 'full')  // Sale is fully returned already
+                                            // Disabled if:
+                                            // 1. No items in cart AND no returned items AND no quantity modifications
+                                            (cart.length === 0 && returnedItemsList.length === 0 && !hasModifiedQuantities) ||
+                                            // 2. Already processing
+                                            processReturnMutation.isPending ||
+                                            // 3. Sale is fully returned
+                                            (searchedSale?.return_status === 'full')
                                         }
-                                        variant="destructive"
+                                        variant={returnedItemsList.length > 0 || cart.length > 0 ? "default" : "destructive"}
                                     >
                                         {processReturnMutation.isPending ? (
                                             "Processing Return..."
                                         ) : (
                                             <>
                                                 <RefreshCw className="h-4 w-4 mr-2" />
-                                                Process Return ({returnedItemsList.length > 0 ? returnedItemsList.length : (hasModifiedQuantities ? "Modified" : "0")} items)
+                                                {returnedItemsList.length > 0
+                                                    ? `Process Return (${returnedItemsList.length} item${returnedItemsList.length > 1 ? 's' : ''})`
+                                                    : (cart.length === 1 && cart[0].quantity === 1)
+                                                        ? `Process Return (1 item)`
+                                                        : (hasModifiedQuantities ? "Process Return (Quantity Reduced)" : "Select Items to Return")
+                                                }
                                             </>
                                         )}
                                     </Button>
@@ -2544,6 +2736,71 @@ export default function Orders() {
                     </DialogContent>
                 </Dialog>
             </main>
+            {/* Shop Owe Confirmation Dialog */}
+            {/* Shop Owe Confirmation Dialog */}
+            <Dialog open={showShopOweDialog} onOpenChange={setShowShopOweDialog}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>💰 Refund Due to Customer</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                        <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200 text-center">
+                            <AlertTriangle className="h-12 w-12 text-yellow-600 mx-auto mb-3" />
+                            <p className="text-sm text-yellow-800 mb-2">
+                                After processing this return, the shop must refund the customer:
+                            </p>
+                            <p className="text-3xl font-bold text-green-600 my-2">{formatPKR(shopOweAmount)}</p>
+                            <p className="text-xs text-yellow-700">
+                                This amount must be paid to the customer in cash or bank transfer.
+                            </p>
+                        </div>
+
+                        <div className="space-y-2">
+                            <p className="text-sm font-medium text-center">Have you paid this amount to the customer?</p>
+                            <div className="flex gap-3">
+                                <Button
+                                    className="flex-1 bg-green-600 hover:bg-green-700"
+                                    onClick={async () => {
+                                        setShowShopOweDialog(false);
+                                        if (pendingReturnData) {
+                                            await processReturnTransaction(pendingReturnData);
+                                            setPendingReturnData(null);
+                                            setShopOweAmount(0);
+                                        }
+                                    }}
+                                >
+                                    ✓ Yes, Paid
+                                </Button>
+                                <Button
+                                    className="flex-1"
+                                    variant="outline"
+                                    onClick={() => {
+                                        setShowShopOweDialog(false);
+                                        setPendingReturnData(null);
+                                        setShopOweAmount(0);
+                                        toast({
+                                            title: "Return Cancelled",
+                                            description: "Please pay the customer first before processing return.",
+                                            variant: "destructive",
+                                        });
+                                    }}
+                                >
+                                    ✗ Cancel Return
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => {
+                            setShowShopOweDialog(false);
+                            setPendingReturnData(null);
+                            setShopOweAmount(0);
+                        }}>
+                            Close
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

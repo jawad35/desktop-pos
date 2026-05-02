@@ -8,6 +8,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
@@ -22,7 +23,11 @@ import {
   ChevronRight,
   ChevronDown,
   Building,
-  Tags
+  Tags,
+  RotateCcw,
+  Eye,
+  EyeOff,
+  AlertTriangle
 } from "lucide-react";
 import { useHeader } from "@/contexts/HeaderContext";
 import { z } from "zod";
@@ -46,24 +51,26 @@ export default function Categories() {
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [editingBrand, setEditingBrand] = useState<Brand | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [showInactiveCategories, setShowInactiveCategories] = useState(false);
+  const [showInactiveBrands, setShowInactiveBrands] = useState(false);
   const { toast } = useToast();
 
-  // Fetch categories
+  // Fetch categories (including inactive if showInactiveCategories is true)
   const { data: categories = [], isLoading: categoriesLoading, refetch: refetchCategories } = useQuery<Category[]>({
-    queryKey: ["categories"],
+    queryKey: ["categories", showInactiveCategories],
     queryFn: async () => {
-      const result = await api.getCategories();
+      const result = await api.getCategories(showInactiveCategories);
       if (Array.isArray(result)) return result;
       if (result?.success && Array.isArray(result.data)) return result.data;
       return [];
     },
   });
 
-  // Fetch brands
+  // Fetch brands (including inactive if showInactiveBrands is true)
   const { data: brands = [], isLoading: brandsLoading, refetch: refetchBrands } = useQuery<Brand[]>({
-    queryKey: ["brands"],
+    queryKey: ["brands", showInactiveBrands],
     queryFn: async () => {
-      const result = await api.getBrands();
+      const result = await api.getBrands(showInactiveBrands);
       if (Array.isArray(result)) return result;
       if (result?.success && Array.isArray(result.data)) return result.data;
       return [];
@@ -134,14 +141,31 @@ export default function Categories() {
     },
   });
 
+  // Soft delete category (set is_active = 0)
   const deleteCategoryMutation = useMutation({
     mutationFn: async (id: string) => {
-      const result = await api.deleteCategory(id);
-      if (!result) throw new Error("Failed to delete category");
+      const result = await api.updateCategory(id, { isActive: false });
+      if (!result) throw new Error("Failed to deactivate category");
       return result;
     },
     onSuccess: () => {
-      toast({ title: "Category Deleted", description: "All child categories were also deleted" });
+      toast({ title: "Category Deactivated", description: "Category has been deactivated. You can restore it later." });
+      refetchCategories();
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // Restore category (set is_active = 1)
+  const restoreCategoryMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const result = await api.updateCategory(id, { isActive: true });
+      if (!result) throw new Error("Failed to restore category");
+      return result;
+    },
+    onSuccess: () => {
+      toast({ title: "Category Restored", description: "Category has been restored and is now active." });
       refetchCategories();
     },
     onError: (error: Error) => {
@@ -185,14 +209,31 @@ export default function Categories() {
     },
   });
 
+  // Soft delete brand (set is_active = 0)
   const deleteBrandMutation = useMutation({
     mutationFn: async (id: string) => {
-      const result = await api.deleteBrand(id);
-      if (!result) throw new Error("Failed to delete brand");
+      const result = await api.updateBrand(id, { isActive: false });
+      if (!result) throw new Error("Failed to deactivate brand");
       return result;
     },
     onSuccess: () => {
-      toast({ title: "Brand Deleted" });
+      toast({ title: "Brand Deactivated", description: "Brand has been deactivated. You can restore it later." });
+      refetchBrands();
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // Restore brand (set is_active = 1)
+  const restoreBrandMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const result = await api.updateBrand(id, { isActive: true });
+      if (!result) throw new Error("Failed to restore brand");
+      return result;
+    },
+    onSuccess: () => {
+      toast({ title: "Brand Restored", description: "Brand has been restored and is now active." });
       refetchBrands();
     },
     onError: (error: Error) => {
@@ -229,12 +270,18 @@ export default function Categories() {
     setCategoryDialogOpen(true);
   };
 
-  const handleDeleteCategory = (id: string, hasChildren: boolean) => {
+  const handleDeleteCategory = (id: string, name: string, hasChildren: boolean) => {
     const message = hasChildren 
-      ? "This category has child categories. Deleting it will also delete ALL child categories. Are you sure?"
-      : "Are you sure you want to delete this category?";
+      ? `Category "${name}" has child categories. Deactivating it will also deactivate ALL child categories. Are you sure?`
+      : `Are you sure you want to deactivate category "${name}"?`;
     if (confirm(message)) {
       deleteCategoryMutation.mutate(id);
+    }
+  };
+
+  const handleRestoreCategory = (id: string, name: string) => {
+    if (confirm(`Restore category "${name}"? It will become active again.`)) {
+      restoreCategoryMutation.mutate(id);
     }
   };
 
@@ -250,7 +297,7 @@ export default function Categories() {
 
   // Get available parent categories (exclude current category and its children when editing)
   const getAvailableParents = () => {
-    if (!editingCategory) return categories;
+    if (!editingCategory) return categories.filter(c => c.is_active === 1);
     
     const getDescendantIds = (catId: string): string[] => {
       const children = categories.filter(c => c.parent_id === catId);
@@ -262,7 +309,7 @@ export default function Categories() {
     };
     
     const excludeIds = getDescendantIds(editingCategory.id);
-    return categories.filter(cat => !excludeIds.includes(cat.id));
+    return categories.filter(cat => !excludeIds.includes(cat.id) && cat.is_active === 1);
   };
 
   const renderCategoryTree = (parentId: string | null = null, level = 0) => {
@@ -271,9 +318,13 @@ export default function Categories() {
     return children.map((category) => {
       const hasChildren = categories.some(cat => cat.parent_id === category.id);
       const isExpanded = expandedCategories.has(category.id);
+      const isInactive = category.is_active === 0;
       
       return (
-        <div key={category.id} className="border border-border rounded-lg mb-2">
+        <div 
+          key={category.id} 
+          className={`border rounded-lg mb-2 transition-opacity ${isInactive ? 'opacity-60 bg-muted/20' : ''}`}
+        >
           <div className="flex items-center justify-between p-3 hover:bg-muted/50">
             <div 
               className="flex items-center flex-1 cursor-pointer"
@@ -290,25 +341,45 @@ export default function Categories() {
                   <div className="w-4" />
                 )}
                 {isExpanded ? (
-                  <FolderOpen className="h-5 w-5 text-primary" />
+                  <FolderOpen className={`h-5 w-5 ${isInactive ? 'text-muted-foreground' : 'text-primary'}`} />
                 ) : (
-                  <Folder className="h-5 w-5 text-primary" />
+                  <Folder className={`h-5 w-5 ${isInactive ? 'text-muted-foreground' : 'text-primary'}`} />
                 )}
-                <span className="font-medium">{category.name}</span>
+                <span className={`font-medium ${isInactive ? 'text-muted-foreground line-through' : ''}`}>
+                  {category.name}
+                </span>
+                {isInactive && (
+                  <Badge variant="outline" className="text-xs ml-2">Inactive</Badge>
+                )}
               </div>
             </div>
             <div className="flex space-x-2">
-              <Button size="sm" variant="ghost" onClick={() => handleEditCategory(category)}>
-                <Edit className="h-4 w-4" />
-              </Button>
-              <Button 
-                size="sm" 
-                variant="ghost" 
-                onClick={() => handleDeleteCategory(category.id, hasChildren)}
-                className="text-destructive hover:text-destructive"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+              {isInactive ? (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button size="sm" variant="ghost" onClick={() => handleRestoreCategory(category.id, category.name)}>
+                        <RotateCcw className="h-4 w-4 text-green-600" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Restore Category</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : (
+                <>
+                  <Button size="sm" variant="ghost" onClick={() => handleEditCategory(category)}>
+                    <Edit className="h-4 w-4" />
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    variant="ghost" 
+                    onClick={() => handleDeleteCategory(category.id, category.name, hasChildren)}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </>
+              )}
             </div>
           </div>
           
@@ -349,11 +420,20 @@ export default function Categories() {
     setBrandDialogOpen(true);
   };
 
-  const handleDeleteBrand = (id: string) => {
-    if (confirm("Are you sure you want to delete this brand?")) {
+  const handleDeleteBrand = (id: string, name: string) => {
+    if (confirm(`Deactivate brand "${name}"? It can be restored later.`)) {
       deleteBrandMutation.mutate(id);
     }
   };
+
+  const handleRestoreBrand = (id: string, name: string) => {
+    if (confirm(`Restore brand "${name}"? It will become active again.`)) {
+      restoreBrandMutation.mutate(id);
+    }
+  };
+
+  const activeBrands = brands.filter(b => b.is_active === 1);
+  const inactiveBrands = brands.filter(b => b.is_active === 0);
 
   const { setTitle, setSubtitle } = useHeader();
 
@@ -370,96 +450,106 @@ export default function Categories() {
           {/* ========== CATEGORY MANAGEMENT ========== */}
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-4">
                 <CardTitle className="flex items-center">
                   <Tags className="h-5 w-5 mr-2" />
                   Category Hierarchy
                 </CardTitle>
-                <Dialog open={categoryDialogOpen} onOpenChange={setCategoryDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button onClick={() => { setEditingCategory(null); categoryForm.reset({ name: "", description: "", parentId: null, isActive: true }); }}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Category
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>
-                        {editingCategory ? "Edit Category" : "Add New Category"}
-                      </DialogTitle>
-                    </DialogHeader>
-                    <Form {...categoryForm}>
-                      <form onSubmit={categoryForm.handleSubmit(onCategorySubmit)} className="space-y-4">
-                        <FormField
-                          control={categoryForm.control}
-                          name="name"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Category Name *</FormLabel>
-                              <FormControl>
-                                <Input {...field} placeholder="Enter category name" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <FormField
-                          control={categoryForm.control}
-                          name="parentId"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Parent Category (Optional)</FormLabel>
-                              <Select
-                                onValueChange={(val) => field.onChange(val === "none" ? null : val)}
-                                value={field.value || "none"}
-                              >
+                <div className="flex gap-2">
+                  <Button
+                    variant={showInactiveCategories ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setShowInactiveCategories(!showInactiveCategories)}
+                  >
+                    {showInactiveCategories ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+                    {showInactiveCategories ? "Hide Inactive" : "Show Inactive"}
+                  </Button>
+                  <Dialog open={categoryDialogOpen} onOpenChange={setCategoryDialogOpen}>
+                    <DialogTrigger asChild>
+                      <Button onClick={() => { setEditingCategory(null); categoryForm.reset({ name: "", description: "", parentId: null, isActive: true }); }}>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Category
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>
+                          {editingCategory ? "Edit Category" : "Add New Category"}
+                        </DialogTitle>
+                      </DialogHeader>
+                      <Form {...categoryForm}>
+                        <form onSubmit={categoryForm.handleSubmit(onCategorySubmit)} className="space-y-4">
+                          <FormField
+                            control={categoryForm.control}
+                            name="name"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Category Name *</FormLabel>
                                 <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select parent category" />
-                                  </SelectTrigger>
+                                  <Input {...field} placeholder="Enter category name" />
                                 </FormControl>
-                                <SelectContent>
-                                  <SelectItem value="none">None (Root Category)</SelectItem>
-                                  {getAvailableParents().map((cat) => (
-                                    <SelectItem key={cat.id} value={cat.id}>
-                                      {cat.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <FormField
-                          control={categoryForm.control}
-                          name="description"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Description</FormLabel>
-                              <FormControl>
-                                <Textarea {...field} rows={3} placeholder="Optional description" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <div className="flex justify-end space-x-2">
-                          <Button type="button" variant="outline" onClick={() => setCategoryDialogOpen(false)}>
-                            Cancel
-                          </Button>
-                          <Button type="submit" disabled={createCategoryMutation.isPending || updateCategoryMutation.isPending}>
-                            {createCategoryMutation.isPending || updateCategoryMutation.isPending
-                              ? "Saving..."
-                              : editingCategory
-                                ? "Update Category"
-                                : "Create Category"}
-                          </Button>
-                        </div>
-                      </form>
-                    </Form>
-                  </DialogContent>
-                </Dialog>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={categoryForm.control}
+                            name="parentId"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Parent Category (Optional)</FormLabel>
+                                <Select
+                                  onValueChange={(val) => field.onChange(val === "none" ? null : val)}
+                                  value={field.value || "none"}
+                                >
+                                  <FormControl>
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Select parent category" />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    <SelectItem value="none">None (Root Category)</SelectItem>
+                                    {getAvailableParents().map((cat) => (
+                                      <SelectItem key={cat.id} value={cat.id}>
+                                        {cat.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={categoryForm.control}
+                            name="description"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Description</FormLabel>
+                                <FormControl>
+                                  <Textarea {...field} rows={3} placeholder="Optional description" />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <div className="flex justify-end space-x-2">
+                            <Button type="button" variant="outline" onClick={() => setCategoryDialogOpen(false)}>
+                              Cancel
+                            </Button>
+                            <Button type="submit" disabled={createCategoryMutation.isPending || updateCategoryMutation.isPending}>
+                              {createCategoryMutation.isPending || updateCategoryMutation.isPending
+                                ? "Saving..."
+                                : editingCategory
+                                  ? "Update Category"
+                                  : "Create Category"}
+                            </Button>
+                          </div>
+                        </form>
+                      </Form>
+                    </DialogContent>
+                  </Dialog>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -485,68 +575,78 @@ export default function Categories() {
           {/* ========== BRAND MANAGEMENT ========== */}
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-4">
                 <CardTitle className="flex items-center">
                   <Building className="h-5 w-5 mr-2" />
                   Brand Management
                 </CardTitle>
-                <Dialog open={brandDialogOpen} onOpenChange={setBrandDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button onClick={() => { setEditingBrand(null); brandForm.reset({ name: "", description: "", isActive: true }); }}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Brand
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>
-                        {editingBrand ? "Edit Brand" : "Add New Brand"}
-                      </DialogTitle>
-                    </DialogHeader>
-                    <Form {...brandForm}>
-                      <form onSubmit={brandForm.handleSubmit(onBrandSubmit)} className="space-y-4">
-                        <FormField
-                          control={brandForm.control}
-                          name="name"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Brand Name *</FormLabel>
-                              <FormControl>
-                                <Input {...field} placeholder="Enter brand name" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <FormField
-                          control={brandForm.control}
-                          name="description"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Description</FormLabel>
-                              <FormControl>
-                                <Textarea {...field} rows={3} placeholder="Optional description" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <div className="flex justify-end space-x-2">
-                          <Button type="button" variant="outline" onClick={() => setBrandDialogOpen(false)}>
-                            Cancel
-                          </Button>
-                          <Button type="submit" disabled={createBrandMutation.isPending || updateBrandMutation.isPending}>
-                            {createBrandMutation.isPending || updateBrandMutation.isPending
-                              ? "Saving..."
-                              : editingBrand
-                                ? "Update Brand"
-                                : "Create Brand"}
-                          </Button>
-                        </div>
-                      </form>
-                    </Form>
-                  </DialogContent>
-                </Dialog>
+                <div className="flex gap-2">
+                  <Button
+                    variant={showInactiveBrands ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setShowInactiveBrands(!showInactiveBrands)}
+                  >
+                    {showInactiveBrands ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+                    {showInactiveBrands ? "Hide Inactive" : "Show Inactive"}
+                  </Button>
+                  <Dialog open={brandDialogOpen} onOpenChange={setBrandDialogOpen}>
+                    <DialogTrigger asChild>
+                      <Button onClick={() => { setEditingBrand(null); brandForm.reset({ name: "", description: "", isActive: true }); }}>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Brand
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>
+                          {editingBrand ? "Edit Brand" : "Add New Brand"}
+                        </DialogTitle>
+                      </DialogHeader>
+                      <Form {...brandForm}>
+                        <form onSubmit={brandForm.handleSubmit(onBrandSubmit)} className="space-y-4">
+                          <FormField
+                            control={brandForm.control}
+                            name="name"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Brand Name *</FormLabel>
+                                <FormControl>
+                                  <Input {...field} placeholder="Enter brand name" />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={brandForm.control}
+                            name="description"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Description</FormLabel>
+                                <FormControl>
+                                  <Textarea {...field} rows={3} placeholder="Optional description" />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <div className="flex justify-end space-x-2">
+                            <Button type="button" variant="outline" onClick={() => setBrandDialogOpen(false)}>
+                              Cancel
+                            </Button>
+                            <Button type="submit" disabled={createBrandMutation.isPending || updateBrandMutation.isPending}>
+                              {createBrandMutation.isPending || updateBrandMutation.isPending
+                                ? "Saving..."
+                                : editingBrand
+                                  ? "Update Brand"
+                                  : "Create Brand"}
+                            </Button>
+                          </div>
+                        </form>
+                      </Form>
+                    </DialogContent>
+                  </Dialog>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -563,7 +663,8 @@ export default function Categories() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {brands.map((brand: Brand) => (
+                  {/* Active Brands */}
+                  {activeBrands.map((brand: Brand) => (
                     <div
                       key={brand.id}
                       className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border border-border"
@@ -583,9 +684,47 @@ export default function Categories() {
                         <Button size="sm" variant="ghost" onClick={() => handleEditBrand(brand)}>
                           <Edit className="h-4 w-4" />
                         </Button>
-                        <Button size="sm" variant="ghost" onClick={() => handleDeleteBrand(brand.id)} className="text-destructive hover:text-destructive">
+                        <Button 
+                          size="sm" 
+                          variant="ghost" 
+                          onClick={() => handleDeleteBrand(brand.id, brand.name)} 
+                          className="text-destructive hover:text-destructive"
+                        >
                           <Trash2 className="h-4 w-4" />
                         </Button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Inactive Brands (only if showInactiveBrands is true) */}
+                  {showInactiveBrands && inactiveBrands.map((brand: Brand) => (
+                    <div
+                      key={brand.id}
+                      className="flex items-center justify-between p-3 bg-muted/10 rounded-lg border border-border opacity-60"
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-muted rounded-lg flex items-center justify-center">
+                          <Building className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-muted-foreground line-through">{brand.name}</p>
+                          {brand.description && (
+                            <p className="text-xs text-muted-foreground mt-1">{brand.description}</p>
+                          )}
+                          <Badge variant="outline" className="text-xs mt-1">Inactive</Badge>
+                        </div>
+                      </div>
+                      <div className="flex space-x-2">
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button size="sm" variant="ghost" onClick={() => handleRestoreBrand(brand.id, brand.name)}>
+                                <RotateCcw className="h-4 w-4 text-green-600" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Restore Brand</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       </div>
                     </div>
                   ))}

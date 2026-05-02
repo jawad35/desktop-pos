@@ -341,6 +341,7 @@ function createAllTables(db) {
         INSERT OR IGNORE INTO settings (id, tax, discount) 
         VALUES ('default', 0, 0)
     `);
+    
 
     // 17. Employees table
     db.exec(`

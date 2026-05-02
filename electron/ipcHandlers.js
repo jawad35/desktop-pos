@@ -111,11 +111,15 @@ export function setupIpcHandlers() {
     });
 
     // ========== CATEGORIES ==========
-    ipcMain.handle('db:getCategories', async () => {
+    ipcMain.handle('db:getCategories', async (event, includeInactive = false) => {
         try {
             const db = getDb();
-            const categories = db.prepare('SELECT * FROM categories WHERE is_active = 1 ORDER BY name').all();
-            console.log('Categories fetched:', categories.length);
+            let query = 'SELECT * FROM categories';
+            if (!includeInactive) {
+                query += ' WHERE is_active = 1';
+            }
+            query += ' ORDER BY name';
+            const categories = db.prepare(query).all();
             return { success: true, data: categories };
         } catch (error) {
             console.error('Error in getCategories:', error);
@@ -200,26 +204,33 @@ export function setupIpcHandlers() {
         try {
             const db = getDb();
 
-            // Recursive function to delete category and all descendants
+            // Check if category has any products
+            const productCount = db.prepare('SELECT COUNT(*) as count FROM products WHERE category_id = ?').get(id);
+
+            if (productCount.count > 0) {
+                return {
+                    success: false,
+                    error: `Cannot delete category with ${productCount.count} products. Reassign products first or mark category as inactive.`
+                };
+            }
+
+            // Recursive function to soft delete category and all descendants
             const deleteCategoryAndDescendants = (categoryId) => {
                 // Get all child categories
-                const children = db.prepare('SELECT id FROM categories WHERE parent_id = ?').all(categoryId);
+                const children = db.prepare('SELECT id FROM categories WHERE parent_id = ? AND is_active = 1').all(categoryId);
 
                 // Recursively delete all children first
                 for (const child of children) {
                     deleteCategoryAndDescendants(child.id);
                 }
 
-                // Remove category reference from products
-                db.prepare('UPDATE products SET category_id = NULL WHERE category_id = ?').run(categoryId);
-
-                // Delete the category
-                db.prepare('DELETE FROM categories WHERE id = ?').run(categoryId);
+                // SOFT DELETE - just mark as inactive, don't actually delete
+                db.prepare('UPDATE categories SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(categoryId);
             };
 
             deleteCategoryAndDescendants(id);
 
-            return { success: true };
+            return { success: true, message: "Category and all subcategories deactivated" };
         } catch (error) {
             console.error('Error in deleteCategory:', error);
             return { success: false, error: error.message };
@@ -227,10 +238,15 @@ export function setupIpcHandlers() {
     });
 
     // ========== BRANDS ==========
-    ipcMain.handle('db:getBrands', async () => {
+    ipcMain.handle('db:getBrands', async (event, includeInactive = false) => {
         try {
             const db = getDb();
-            const brands = db.prepare('SELECT * FROM brands WHERE is_active = 1 ORDER BY name').all();
+            let query = 'SELECT * FROM brands';
+            if (!includeInactive) {
+                query += ' WHERE is_active = 1';
+            }
+            query += ' ORDER BY name';
+            const brands = db.prepare(query).all();
             return { success: true, data: brands };
         } catch (error) {
             console.error('Error in getBrands:', error);
@@ -1231,10 +1247,10 @@ export function setupIpcHandlers() {
                 saleData.total, saleData.total_profit || 0, saleData.paymentMethod || 'cash',
                 saleData.accountNumber, saleData.paymentStatus || 'completed',
                 saleData.employeeId, saleData.userId, saleData.shopId,
-                saleData.paid_amount || 0,      // ADD THIS
-                saleData.due_amount || 0,       // ADD THIS
-                saleData.due_date || null,      // ADD THIS
-                saleData.due_reason || null     // ADD THIS
+                saleData.paid_amount || 0,
+                saleData.due_amount || 0,
+                saleData.due_date || null,
+                saleData.due_reason || null
             );
 
             // Insert sale items
@@ -1255,14 +1271,16 @@ export function setupIpcHandlers() {
             }
 
             // Record initial payment if partial payment
+            let paymentId = null;
             if (saleData.paymentStatus === 'partial' && saleData.paid_amount > 0) {
                 try {
+                    paymentId = crypto.randomUUID();
                     const paymentStmt = db.prepare(`
                     INSERT INTO sale_payments (id, sale_id, amount, payment_method, notes, remaining_due)
                     VALUES (?, ?, ?, ?, ?, ?)
                 `);
                     paymentStmt.run(
-                        crypto.randomUUID(),
+                        paymentId,
                         id,
                         saleData.paid_amount,
                         saleData.paymentMethod || 'cash',
@@ -1275,7 +1293,23 @@ export function setupIpcHandlers() {
             }
 
             db.exec('COMMIT');
+
+            // Fetch the newly created sale with all data
             const newSale = db.prepare('SELECT * FROM sales WHERE id = ?').get(id);
+
+            // Fetch items for the sale
+            const saleItems = db.prepare(`
+            SELECT si.*, p.name as product_name, p.barcode, p.image_url, p.cost_price
+            FROM sale_items si
+            JOIN products p ON si.product_id = p.id
+            WHERE si.sale_id = ?
+        `).all(id);
+            newSale.items = saleItems;
+
+            // Fetch payments for the sale
+            const payments = db.prepare('SELECT * FROM sale_payments WHERE sale_id = ?').all(id);
+            newSale.payments = payments;
+
             return { success: true, data: newSale };
         } catch (error) {
             db.exec('ROLLBACK');
@@ -1337,14 +1371,9 @@ export function setupIpcHandlers() {
                     updates.push('returned_items = ?');
                     params.push(saleData.returned_items);
                 }
-                // ADD THESE:
                 if (saleData.paid_amount !== undefined) {
                     updates.push('paid_amount = ?');
                     params.push(saleData.paid_amount);
-                }
-                if (saleData.due_amount !== undefined) {
-                    updates.push('due_amount = ?');
-                    params.push(saleData.due_amount);
                 }
                 if (saleData.due_date !== undefined) {
                     updates.push('due_date = ?');
@@ -1355,10 +1384,51 @@ export function setupIpcHandlers() {
                     params.push(saleData.due_reason);
                 }
 
+                // CRITICAL FIX: Always recalculate due_amount from payments
+                // Get current sale data to calculate correct due
+                const currentSale = db.prepare('SELECT total, total_returned_amount, paid_amount FROM sales WHERE id = ?').get(id);
+
+                // Get all payments for this sale
+                const payments = db.prepare('SELECT * FROM sale_payments WHERE sale_id = ?').all(id);
+
+                // Calculate total paid from payments
+                let totalPaidFromPayments = 0;
+                payments.forEach(p => {
+                    if (p.amount > 0) totalPaidFromPayments += p.amount;
+                });
+
+                // Use the updated paid_amount if provided, otherwise use payments total
+                let finalPaidAmount = saleData.paid_amount !== undefined ? saleData.paid_amount : totalPaidFromPayments;
+
+                const saleTotal = parseFloat(currentSale.total) || 0;
+                const returnedAmount = parseFloat(currentSale.total_returned_amount) || 0;
+                const effectiveTotal = saleTotal - returnedAmount;
+                const calculatedDue = Math.max(0, effectiveTotal - finalPaidAmount);
+
+                // Always update due_amount with calculated value
+                updates.push('due_amount = ?');
+                params.push(calculatedDue);
+
+                // Also update payment_status based on due
+                let paymentStatus = saleData.paymentStatus;
+                if (paymentStatus === undefined) {
+                    if (calculatedDue === 0) {
+                        paymentStatus = 'completed';
+                    } else if (finalPaidAmount === 0) {
+                        paymentStatus = 'pending';
+                    } else {
+                        paymentStatus = 'partial';
+                    }
+                    updates.push('payment_status = ?');
+                    params.push(paymentStatus);
+                }
+
                 if (updates.length > 0) {
                     updates.push('updated_at = CURRENT_TIMESTAMP');
                     params.push(id);
                     const query = `UPDATE sales SET ${updates.join(', ')} WHERE id = ?`;
+                    console.log("🔍 [IPC] Update query:", query);
+                    console.log("🔍 [IPC] Update params:", params);
                     db.prepare(query).run(...params);
                 }
 
@@ -1366,11 +1436,11 @@ export function setupIpcHandlers() {
                 if (saleData.items !== undefined && Array.isArray(saleData.items)) {
                     db.prepare('DELETE FROM sale_items WHERE sale_id = ?').run(id);
                     const insertStmt = db.prepare(`
-                    INSERT INTO sale_items (id, sale_id, product_id, quantity, unit_price, total)
-                    VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, ?)
+                    INSERT INTO sale_items (id, sale_id, product_id, quantity, unit_price, total, profit)
+                    VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, ?, ?)
                 `);
                     for (const item of saleData.items) {
-                        insertStmt.run(id, item.product_id, item.quantity, item.unit_price, item.total);
+                        insertStmt.run(id, item.product_id, item.quantity, item.unit_price, item.total, item.profit || 0);
                     }
                 }
             });
@@ -1760,18 +1830,33 @@ export function setupIpcHandlers() {
         try {
             const db = getDb();
             const id = crypto.randomUUID();
+
+            // Determine which rate to use as salary based on payment_type
+            let salary = employeeData.salary || 0;
+            if (employeeData.payment_type === 'daily') {
+                salary = employeeData.daily_rate || 0;
+            } else if (employeeData.payment_type === 'weekly') {
+                salary = employeeData.weekly_rate || 0;
+            } else if (employeeData.payment_type === 'hourly') {
+                salary = employeeData.hourly_rate || 0;
+            } else if (employeeData.payment_type === 'contract') {
+                salary = employeeData.contract_amount || 0;
+            }
+
             const stmt = db.prepare(`
             INSERT INTO employees (
                 id, name, phone, salary, salary_type, payment_method, shift, 
-                employee_type, join_date, leave_date, is_active, user_id, shop_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                employee_type, join_date, leave_date, is_active, user_id, shop_id,
+                payment_type, daily_rate, weekly_rate, hourly_rate, contract_amount,
+                contract_start_date, contract_end_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
             stmt.run(
                 id,
                 employeeData.name,
                 employeeData.phone,
-                employeeData.salary,
+                salary,
                 employeeData.salary_type || 'monthly',
                 employeeData.payment_method || 'cash',
                 employeeData.shift || 'day',
@@ -1780,7 +1865,14 @@ export function setupIpcHandlers() {
                 employeeData.leave_date || null,
                 employeeData.is_active !== false ? 1 : 0,
                 employeeData.user_id || 'system',
-                employeeData.shop_id || 'default'
+                employeeData.shop_id || 'default',
+                employeeData.payment_type || 'fixed',
+                employeeData.daily_rate || 0,
+                employeeData.weekly_rate || 0,
+                employeeData.hourly_rate || 0,
+                employeeData.contract_amount || 0,
+                employeeData.contract_start_date || null,
+                employeeData.contract_end_date || null
             );
 
             const newEmployee = db.prepare('SELECT * FROM employees WHERE id = ?').get(id);
@@ -1809,6 +1901,15 @@ export function setupIpcHandlers() {
             if (employeeData.join_date !== undefined) { updates.push('join_date = ?'); params.push(employeeData.join_date); }
             if (employeeData.leave_date !== undefined) { updates.push('leave_date = ?'); params.push(employeeData.leave_date); }
 
+            // New flexible payment fields
+            if (employeeData.payment_type !== undefined) { updates.push('payment_type = ?'); params.push(employeeData.payment_type); }
+            if (employeeData.daily_rate !== undefined) { updates.push('daily_rate = ?'); params.push(employeeData.daily_rate); }
+            if (employeeData.weekly_rate !== undefined) { updates.push('weekly_rate = ?'); params.push(employeeData.weekly_rate); }
+            if (employeeData.hourly_rate !== undefined) { updates.push('hourly_rate = ?'); params.push(employeeData.hourly_rate); }
+            if (employeeData.contract_amount !== undefined) { updates.push('contract_amount = ?'); params.push(employeeData.contract_amount); }
+            if (employeeData.contract_start_date !== undefined) { updates.push('contract_start_date = ?'); params.push(employeeData.contract_start_date); }
+            if (employeeData.contract_end_date !== undefined) { updates.push('contract_end_date = ?'); params.push(employeeData.contract_end_date); }
+
             if (updates.length === 0) {
                 return { success: false, error: 'No fields to update' };
             }
@@ -1819,11 +1920,245 @@ export function setupIpcHandlers() {
             const query = `UPDATE employees SET ${updates.join(', ')} WHERE id = ?`;
             const result = db.prepare(query).run(...params);
 
-            // Get updated employee to return
             const updatedEmployee = db.prepare('SELECT * FROM employees WHERE id = ?').get(id);
             return { success: result.changes > 0, data: updatedEmployee };
         } catch (error) {
             console.error('Error in updateEmployee:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // ========== EMPLOYEE PAYMENTS ==========
+    ipcMain.handle('db:getEmployeePayments', async (event, employeeId) => {
+        try {
+            const db = getDb();
+            const payments = db.prepare(`
+            SELECT * FROM employee_payments 
+            WHERE employee_id = ? 
+            ORDER BY payment_date DESC
+        `).all(employeeId);
+            return { success: true, data: payments };
+        } catch (error) {
+            console.error('Error in getEmployeePayments:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('db:createEmployeePayment', async (event, paymentData) => {
+        try {
+            const db = getDb();
+            const id = crypto.randomUUID();
+
+            // Check for duplicate payment on same period
+            const existing = db.prepare(`
+            SELECT * FROM employee_payments 
+            WHERE employee_id = ? AND period_start = ? AND period_end = ? AND payment_type = ?
+        `).get(paymentData.employee_id, paymentData.period_start, paymentData.period_end, paymentData.payment_type);
+
+            if (existing) {
+                return { success: false, error: 'Payment already recorded for this period' };
+            }
+
+            const stmt = db.prepare(`
+            INSERT INTO employee_payments 
+            (id, employee_id, payment_date, amount, payment_type, period_start, period_end, 
+             description, status, payment_method, user_id, shop_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+            stmt.run(
+                id, paymentData.employee_id, paymentData.payment_date, paymentData.amount,
+                paymentData.payment_type, paymentData.period_start, paymentData.period_end,
+                paymentData.description, paymentData.status || 'completed',
+                paymentData.payment_method || 'cash', paymentData.user_id, paymentData.shop_id
+            );
+
+            return { success: true, data: { id } };
+        } catch (error) {
+            console.error('Error in createEmployeePayment:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // ========== EMPLOYEE ADVANCES ==========
+    ipcMain.handle('db:getEmployeeAdvances', async (event, employeeId) => {
+        try {
+            const db = getDb();
+            const advances = db.prepare(`
+            SELECT * FROM employee_advances 
+            WHERE employee_id = ? 
+            ORDER BY advance_date DESC
+        `).all(employeeId);
+            return { success: true, data: advances };
+        } catch (error) {
+            console.error('Error in getEmployeeAdvances:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('db:createEmployeeAdvance', async (event, advanceData) => {
+        try {
+            const db = getDb();
+            const id = crypto.randomUUID();
+
+            const stmt = db.prepare(`
+            INSERT INTO employee_advances 
+            (id, employee_id, advance_date, amount, paid_amount, remaining_amount, 
+             reason, status, expected_deduction_date, user_id, shop_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+            stmt.run(
+                id, advanceData.employee_id, advanceData.advance_date, advanceData.amount,
+                advanceData.paid_amount || 0, advanceData.remaining_amount || advanceData.amount,
+                advanceData.reason, advanceData.status || 'pending',
+                advanceData.expected_deduction_date, advanceData.user_id, advanceData.shop_id
+            );
+
+            return { success: true, data: { id } };
+        } catch (error) {
+            console.error('Error in createEmployeeAdvance:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('db:updateEmployeeAdvance', async (event, id, updateData) => {
+        try {
+            const db = getDb();
+
+            const updates = [];
+            const params = [];
+
+            if (updateData.paid_amount !== undefined) { updates.push('paid_amount = ?'); params.push(updateData.paid_amount); }
+            if (updateData.remaining_amount !== undefined) { updates.push('remaining_amount = ?'); params.push(updateData.remaining_amount); }
+            if (updateData.status !== undefined) { updates.push('status = ?'); params.push(updateData.status); }
+
+            if (updates.length === 0) {
+                return { success: false, error: 'No fields to update' };
+            }
+
+            updates.push('updated_at = CURRENT_TIMESTAMP');
+            params.push(id);
+
+            const query = `UPDATE employee_advances SET ${updates.join(', ')} WHERE id = ?`;
+            const result = db.prepare(query).run(...params);
+
+            return { success: result.changes > 0 };
+        } catch (error) {
+            console.error('Error in updateEmployeeAdvance:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // ========== SALARY DEDUCTIONS ==========
+    ipcMain.handle('db:createSalaryDeduction', async (event, deductionData) => {
+        try {
+            const db = getDb();
+            const id = crypto.randomUUID();
+
+            // Create salary_deductions table if not exists
+            db.exec(`
+            CREATE TABLE IF NOT EXISTS salary_deductions (
+                id TEXT PRIMARY KEY,
+                employee_id TEXT NOT NULL,
+                advance_id TEXT,
+                amount DECIMAL(10,2) NOT NULL,
+                deduction_type TEXT NOT NULL,
+                deduction_month TEXT,
+                monthly_amount DECIMAL(10,2),
+                total_months INTEGER,
+                deducted_so_far DECIMAL(10,2) DEFAULT 0,
+                status TEXT DEFAULT 'scheduled',
+                notes TEXT,
+                user_id TEXT NOT NULL,
+                shop_id TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+            )
+        `);
+
+            const stmt = db.prepare(`
+            INSERT INTO salary_deductions (
+                id, employee_id, advance_id, amount, deduction_type, deduction_month,
+                monthly_amount, total_months, deducted_so_far, status, notes, user_id, shop_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+            stmt.run(
+                id,
+                deductionData.employee_id,
+                deductionData.advance_id || null,
+                deductionData.amount,
+                deductionData.deduction_type,
+                deductionData.deduction_month || null,
+                deductionData.monthly_amount || 0,
+                deductionData.total_months || 0,
+                deductionData.deducted_so_far || 0,
+                deductionData.status || 'scheduled',
+                deductionData.notes || null,
+                deductionData.user_id,
+                deductionData.shop_id
+            );
+
+            // Update the advance to mark it as scheduled for deduction
+            if (deductionData.advance_id) {
+                db.prepare(`
+                UPDATE employee_advances 
+                SET status = ?, updated_at = CURRENT_TIMESTAMP 
+                WHERE id = ?
+            `).run(
+                    deductionData.deduction_type === 'installments' ? 'scheduled_installments' : 'scheduled_deduction',
+                    deductionData.advance_id
+                );
+            }
+
+            const newDeduction = db.prepare('SELECT * FROM salary_deductions WHERE id = ?').get(id);
+            return { success: true, data: newDeduction };
+        } catch (error) {
+            console.error('Error in createSalaryDeduction:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('db:getSalaryDeductions', async (event, employeeId) => {
+        try {
+            const db = getDb();
+            const deductions = db.prepare(`
+            SELECT * FROM salary_deductions 
+            WHERE employee_id = ? 
+            ORDER BY created_at DESC
+        `).all(employeeId);
+            return { success: true, data: deductions };
+        } catch (error) {
+            console.error('Error in getSalaryDeductions:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('db:updateSalaryDeduction', async (event, id, updateData) => {
+        try {
+            const db = getDb();
+            const updates = [];
+            const params = [];
+
+            if (updateData.deducted_so_far !== undefined) { updates.push('deducted_so_far = ?'); params.push(updateData.deducted_so_far); }
+            if (updateData.status !== undefined) { updates.push('status = ?'); params.push(updateData.status); }
+            if (updateData.notes !== undefined) { updates.push('notes = ?'); params.push(updateData.notes); }
+
+            if (updates.length === 0) {
+                return { success: false, error: 'No fields to update' };
+            }
+
+            updates.push('updated_at = CURRENT_TIMESTAMP');
+            params.push(id);
+
+            const query = `UPDATE salary_deductions SET ${updates.join(', ')} WHERE id = ?`;
+            const result = db.prepare(query).run(...params);
+
+            return { success: result.changes > 0 };
+        } catch (error) {
+            console.error('Error in updateSalaryDeduction:', error);
             return { success: false, error: error.message };
         }
     });
@@ -2888,6 +3223,148 @@ export function setupIpcHandlers() {
             }
             return { success: true };
         } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    // ============ TAX MANAGEMENT HANDLERS ============
+
+    // Get Tax Payments
+    ipcMain.handle('db:getTaxPayments', async () => {
+        const db = getDb();
+        try {
+            // Ensure table exists
+            db.exec(`
+            CREATE TABLE IF NOT EXISTS tax_payments (
+                id TEXT PRIMARY KEY,
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                amount REAL NOT NULL,
+                challan_number TEXT,
+                payment_method TEXT,
+                notes TEXT,
+                payment_date TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+            const payments = db.prepare('SELECT * FROM tax_payments ORDER BY payment_date DESC').all();
+            return { success: true, data: payments };
+        } catch (error) {
+            console.error('Error getting tax payments:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Create Tax Payment
+    ipcMain.handle('db:createTaxPayment', async (event, paymentData) => {
+        const db = getDb();
+        const id = crypto.randomUUID();
+
+        try {
+            // Ensure table exists
+            db.exec(`
+            CREATE TABLE IF NOT EXISTS tax_payments (
+                id TEXT PRIMARY KEY,
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                amount REAL NOT NULL,
+                challan_number TEXT,
+                payment_method TEXT,
+                notes TEXT,
+                payment_date TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+            const stmt = db.prepare(`
+            INSERT INTO tax_payments (id, period_start, period_end, amount, challan_number, payment_method, notes, payment_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+            stmt.run(
+                id,
+                paymentData.period_start,
+                paymentData.period_end,
+                paymentData.amount,
+                paymentData.challan_number || null,
+                paymentData.payment_method || 'bank',
+                paymentData.notes || null,
+                paymentData.payment_date || new Date().toISOString()
+            );
+
+            const newPayment = db.prepare('SELECT * FROM tax_payments WHERE id = ?').get(id);
+            return { success: true, data: newPayment };
+        } catch (error) {
+            console.error('Error creating tax payment:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Get Tax Summary
+    ipcMain.handle('db:getTaxSummary', async (event, startDate, endDate) => {
+        const db = getDb();
+        try {
+            // Get all sales
+            let salesQuery = 'SELECT * FROM sales';
+            let salesParams = [];
+
+            if (startDate && endDate) {
+                salesQuery += ' WHERE created_at BETWEEN ? AND ?';
+                salesParams = [startDate, endDate];
+            }
+
+            const sales = db.prepare(salesQuery).all(salesParams);
+
+            // Calculate tax collected from sales
+            let totalTaxCollected = 0;
+            let totalSales = 0;
+
+            for (const sale of sales) {
+                const subtotal = parseFloat(sale.subtotal) || 0;
+                const taxRate = parseFloat(sale.tax) || 0;
+                const taxAmount = (subtotal * taxRate) / 100;
+                totalTaxCollected += taxAmount;
+                totalSales += parseFloat(sale.total) || 0;
+            }
+
+            // Get tax payments
+            let paymentsQuery = 'SELECT * FROM tax_payments';
+            let paymentsParams = [];
+
+            if (startDate && endDate) {
+                paymentsQuery += ' WHERE payment_date BETWEEN ? AND ?';
+                paymentsParams = [startDate, endDate];
+            }
+
+            const payments = db.prepare(paymentsQuery).all(paymentsParams);
+            const totalTaxPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+
+            // Get payments by period
+            const paymentsByPeriod = db.prepare(`
+            SELECT 
+                period_start,
+                period_end,
+                SUM(amount) as total_paid,
+                COUNT(*) as payment_count
+            FROM tax_payments
+            GROUP BY period_start, period_end
+            ORDER BY period_start DESC
+        `).all();
+
+            return {
+                success: true,
+                data: {
+                    total_tax_collected: totalTaxCollected,
+                    total_tax_paid: totalTaxPaid,
+                    balance_due: totalTaxCollected - totalTaxPaid,
+                    total_sales: totalSales,
+                    payments_by_period: paymentsByPeriod,
+                    payments: payments
+                }
+            };
+        } catch (error) {
+            console.error('Error getting tax summary:', error);
             return { success: false, error: error.message };
         }
     });

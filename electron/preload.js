@@ -89,10 +89,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
         const result = await ipcRenderer.invoke('db:updateProductVariant', id, variantData);
         return result.success ? result.data : null;
     },
-
     // ========== CATEGORIES ==========
-    getCategories: async () => {
-        const result = await ipcRenderer.invoke('db:getCategories');
+    getCategories: async (includeInactive = false) => {  // ADD parameter
+        const result = await ipcRenderer.invoke('db:getCategories', includeInactive);  // PASS parameter
         console.log('IPC getCategories result:', result);
         return result.success ? result.data : [];
     },
@@ -111,8 +110,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
 
     // ========== BRANDS ==========
-    getBrands: async () => {
-        const result = await ipcRenderer.invoke('db:getBrands');
+    getBrands: async (includeInactive = false) => {  // ADD parameter
+        const result = await ipcRenderer.invoke('db:getBrands', includeInactive);  // PASS parameter
         return result.success ? result.data : [];
     },
     createBrand: async (brand) => {
@@ -253,6 +252,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return result;
     },
 
+    // ========== EMPLOYEE PAYMENTS & ADVANCES ==========
+    getEmployeePayments: (employeeId) => ipcRenderer.invoke('db:getEmployeePayments', employeeId),
+    createEmployeePayment: (paymentData) => ipcRenderer.invoke('db:createEmployeePayment', paymentData),
+    getEmployeeAdvances: (employeeId) => ipcRenderer.invoke('db:getEmployeeAdvances', employeeId),
+    createEmployeeAdvance: (advanceData) => ipcRenderer.invoke('db:createEmployeeAdvance', advanceData),
+    updateEmployeeAdvance: (id, updateData) => ipcRenderer.invoke('db:updateEmployeeAdvance', id, updateData),
+    // Salary Deductions
+    createSalaryDeduction: (deductionData) => ipcRenderer.invoke('db:createSalaryDeduction', deductionData),
+    getSalaryDeductions: (employeeId) => ipcRenderer.invoke('db:getSalaryDeductions', employeeId),
+    updateSalaryDeduction: (id, data) => ipcRenderer.invoke('db:updateSalaryDeduction', id, data),
     // ========== EMPLOYEES ==========
     getEmployees: async (filters) => {
         console.log('Preload - getEmployees called with:', filters);
@@ -445,6 +454,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         const result = await ipcRenderer.invoke('db:getSalePayments', saleId);
         return result;
     },
+
     createSalePayment: async (paymentData) => {
         const result = await ipcRenderer.invoke('db:createSalePayment', paymentData);
         return result;
@@ -480,6 +490,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     syncShopData: async (shopData) => {
         return await ipcRenderer.invoke('shop:syncData', shopData);
     },
+
+    // Tax Management
+    getTaxPayments: () => ipcRenderer.invoke('db:getTaxPayments'),
+    createTaxPayment: (paymentData) => ipcRenderer.invoke('db:createTaxPayment', paymentData),
+    getTaxSummary: (startDate, endDate) => ipcRenderer.invoke('db:getTaxSummary', startDate, endDate),
 
     restartApp: async () => {
         return await ipcRenderer.invoke('app:restart');

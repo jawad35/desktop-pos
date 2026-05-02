@@ -6,6 +6,19 @@ type ElectronAPI = {
     logout: () => Promise<void>;
     getCurrentUser: () => Promise<any>;
 
+    // Tax Management
+    getTaxPayments: () => Promise<any>;
+    createTaxPayment: (paymentData: {
+        period_start: string;
+        period_end: string;
+        amount: number;
+        challan_number?: string;
+        payment_method?: string;
+        notes?: string;
+        payment_date: string;
+    }) => Promise<any>;
+    getTaxSummary: (startDate?: string, endDate?: string) => Promise<any>;
+
     connectGoogleDrive: () => Promise<any>;
     onGoogleToken: (callback: (token: string) => void) => void;
     uploadToGoogleDrive: (data: { accessToken: string; dbPath: string }) => Promise<any>;
@@ -26,13 +39,13 @@ type ElectronAPI = {
     getDamageStats: () => Promise<any>;
 
     // Categories
-    getCategories: () => Promise<any>;
+    getCategories: (includeInactive?: boolean) => Promise<any>;  // CHANGED
     createCategory: (data: any) => Promise<any>;
     updateCategory: (id: string, data: any) => Promise<any>;
     deleteCategory: (id: string) => Promise<any>;
 
     // Brands
-    getBrands: () => Promise<any>;
+    getBrands: (includeInactive?: boolean) => Promise<any>;
     createBrand: (data: any) => Promise<any>;
     updateBrand: (id: string, data: any) => Promise<any>;
     deleteBrand: (id: string) => Promise<any>;
@@ -77,6 +90,13 @@ type ElectronAPI = {
     updateEmployee: (id: string, data: any) => Promise<any>;
     deleteEmployee: (id: string) => Promise<any>;
 
+    // Employee Payments & Advances (Add these)
+    getEmployeePayments: (employeeId: string) => Promise<any>;
+    createEmployeePayment: (paymentData: any) => Promise<any>;
+    getEmployeeAdvances: (employeeId: string) => Promise<any>;
+    createEmployeeAdvance: (advanceData: any) => Promise<any>;
+    updateEmployeeAdvance: (id: string, data: any) => Promise<any>;
+
     // Attendance
     getAttendance: (employeeId: string, month?: string, year?: string) => Promise<any>;
     markAttendance: (data: any) => Promise<any>;
@@ -85,6 +105,10 @@ type ElectronAPI = {
     getSalaries: (employeeId: string, month?: string, year?: string) => Promise<any>;
     createSalary: (data: any) => Promise<any>;
     updateSalaryStatus: (id: string, status: string) => Promise<any>;
+    // Add to ElectronAPI interface
+    createSalaryDeduction: (deductionData: any) => Promise<any>;
+    getSalaryDeductions: (employeeId: string) => Promise<any>;
+    updateSalaryDeduction: (id: string, data: any) => Promise<any>;
     // Add this to ElectronAPI interface
     getProfitData: (startDate: string, endDate: string) => Promise<any>;
     // Returns
@@ -142,6 +166,20 @@ const electronAPI: ElectronAPI = {
     login: (email, password) => window.electronAPI.login(email, password),
     logout: () => window.electronAPI.logout(),
     getCurrentUser: () => window.electronAPI.getCurrentUser(),
+
+    // Tax Management
+    getTaxPayments: async () => {
+        const result = await window.electronAPI.getTaxPayments();
+        return result.success ? result.data : [];
+    },
+    createTaxPayment: async (paymentData) => {
+        const result = await window.electronAPI.createTaxPayment(paymentData);
+        return result.success ? result.data : null;
+    },
+    getTaxSummary: async (startDate, endDate) => {
+        const result = await window.electronAPI.getTaxSummary(startDate, endDate);
+        return result.success ? result.data : null;
+    },
     // License methods
     activateLicense: (licenseKey) => window.electronAPI.activateLicense(licenseKey),
     checkLicense: () => window.electronAPI.checkLicense(),
@@ -175,13 +213,13 @@ const electronAPI: ElectronAPI = {
     getDamageStats: () => window.electronAPI.getDamageStats(),
     // In the electronAPI object, add:
     // Categories
-    getCategories: () => window.electronAPI.getCategories(),
+    getCategories: (includeInactive?: boolean) => window.electronAPI.getCategories(includeInactive),
     createCategory: (data) => window.electronAPI.createCategory(data),
     updateCategory: (id, data) => window.electronAPI.updateCategory(id, data),
     deleteCategory: (id) => window.electronAPI.deleteCategory(id),
 
     // Brands
-    getBrands: () => window.electronAPI.getBrands(),
+    getBrands: (includeInactive?: boolean) => window.electronAPI.getBrands(includeInactive),
     createBrand: (data) => window.electronAPI.createBrand(data),
     updateBrand: (id, data) => window.electronAPI.updateBrand(id, data),
     deleteBrand: (id) => window.electronAPI.deleteBrand(id),
@@ -219,6 +257,42 @@ const electronAPI: ElectronAPI = {
     createEmployee: (data) => window.electronAPI.createEmployee(data),
     updateEmployee: (id, data) => window.electronAPI.updateEmployee(id, data),
     deleteEmployee: (id) => window.electronAPI.deleteEmployee(id),
+
+    // Employee Payments & Advances (Add after deleteEmployee)
+    getEmployeePayments: async (employeeId: string) => {
+        const result = await window.electronAPI.getEmployeePayments(employeeId);
+        return result.success ? result.data : [];
+    },
+    createEmployeePayment: async (paymentData: any) => {
+        const result = await window.electronAPI.createEmployeePayment(paymentData);
+        return result;
+    },
+    getEmployeeAdvances: async (employeeId: string) => {
+        const result = await window.electronAPI.getEmployeeAdvances(employeeId);
+        return result.success ? result.data : [];
+    },
+    createEmployeeAdvance: async (advanceData: any) => {
+        const result = await window.electronAPI.createEmployeeAdvance(advanceData);
+        return result;
+    },
+    updateEmployeeAdvance: async (id: string, data: any) => {
+        const result = await window.electronAPI.updateEmployeeAdvance(id, data);
+        return result;
+    },
+
+    // Add to electronAPI object
+    createSalaryDeduction: async (deductionData: any) => {
+        const result = await window.electronAPI.createSalaryDeduction(deductionData);
+        return result;
+    },
+    getSalaryDeductions: async (employeeId: string) => {
+        const result = await window.electronAPI.getSalaryDeductions(employeeId);
+        return result.success ? result.data : [];
+    },
+    updateSalaryDeduction: async (id: string, data: any) => {
+        const result = await window.electronAPI.updateSalaryDeduction(id, data);
+        return result;
+    },
 
     // Attendance
     getAttendance: (employeeId, month, year) => window.electronAPI.getAttendance(employeeId, month, year),
@@ -345,6 +419,40 @@ const webAPI: ElectronAPI = {
     createEmployee: (data) => fetch('/api/employees', { method: 'POST', body: JSON.stringify(data) }).then(r => r.json()),
     updateEmployee: (id, data) => fetch(`/api/employees/${id}`, { method: 'PUT', body: JSON.stringify(data) }).then(r => r.json()),
     deleteEmployee: (id) => fetch(`/api/employees/${id}`, { method: 'DELETE' }).then(r => r.json()),
+    // Employee Payments & Advances (Add after deleteEmployee)
+    getEmployeePayments: async () => {
+        const response = await fetch('/api/employee-payments');
+        return response.json();
+    },
+    createEmployeePayment: async (paymentData) => {
+        const response = await fetch('/api/employee-payments', {
+            method: 'POST',
+            body: JSON.stringify(paymentData),
+            headers: { 'Content-Type': 'application/json' }
+        });
+        return response.json();
+    },
+    getEmployeeAdvances: async () => {
+        const response = await fetch('/api/employee-advances');
+        return response.json();
+    },
+    createEmployeeAdvance: async (advanceData) => {
+        const response = await fetch('/api/employee-advances', {
+            method: 'POST',
+            body: JSON.stringify(advanceData),
+            headers: { 'Content-Type': 'application/json' }
+        });
+        return response.json();
+    },
+    updateEmployeeAdvance: async (id, data) => {
+        const response = await fetch(`/api/employee-advances/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+            headers: { 'Content-Type': 'application/json' }
+        });
+        return response.json();
+    },
+
     getAttendance: (employeeId, month, year) => fetch(`/api/employees/${employeeId}/attendance?month=${month}&year=${year}`).then(r => r.json()),
     markAttendance: (data) => fetch(`/api/employees/${data.employeeId}/attendance`, { method: 'POST', body: JSON.stringify(data) }).then(r => r.json()),
     getSalaries: (employeeId, month, year) => fetch(`/api/employees/${employeeId}/salaries?month=${month}&year=${year}`).then(r => r.json()),
@@ -372,6 +480,26 @@ const webAPI: ElectronAPI = {
     updateLicenseShopData: async () => ({ success: false }),
     getShopId: async () => ({ shopId: null }),
     syncShopData: async () => ({ success: false }),
+    // Tax Management
+    getTaxPayments: async () => {
+        const response = await fetch('/api/tax/payments');
+        return response.json();
+    },
+    createTaxPayment: async (paymentData) => {
+        const response = await fetch('/api/tax/payments', {
+            method: 'POST',
+            body: JSON.stringify(paymentData),
+            headers: { 'Content-Type': 'application/json' }
+        });
+        return response.json();
+    },
+    getTaxSummary: async (startDate, endDate) => {
+        const url = startDate && endDate
+            ? `/api/tax/summary?startDate=${startDate}&endDate=${endDate}`
+            : '/api/tax/summary';
+        const response = await fetch(url);
+        return response.json();
+    },
     restartApp: async () => {
         console.log('Restart not available in web version');
         window.location.reload(); // Just reload the page for web

@@ -46,6 +46,7 @@ const ALL_NAVIGATION = [
   { name: "Net Profit", href: "/net-profit", icon: Banknote, title: "Net Profit", subtitle: "Track Net Profit", adminOnly: true },
   { name: "Profile", href: "/profile", icon: UserCircle, title: "Profile", subtitle: "See Shop Details", adminOnly: false },
   { name: "Settings", href: "/settings", icon: Settings, title: "Settings", subtitle: "Manage settings", adminOnly: true },
+  { name: "Tax", href: "/tax-management", icon: Settings, title: "Tax", subtitle: "Manage Tax", adminOnly: true },
   { name: "User Guide", href: "/user-guide", icon: HelpCircle, title: "User Guide", subtitle: "User Guide", adminOnly: true },
   { name: "Terms Polices", href: "/terms-policies", icon: HelpCircle, title: "Terms Polices", subtitle: "Terms and Polices", adminOnly: true },
 ];

@@ -16,7 +16,9 @@ import {
   MessageCircle,
   ChevronLeft, 
   ChevronRight,
-  CalendarIcon
+  CalendarIcon,
+  AlertCircle,
+  CheckCircle
 } from "lucide-react";
 import { api } from "../../services/electron-api";
 import { useToast } from "@/hooks/use-toast";
@@ -32,6 +34,7 @@ interface DueSale {
   due_date: string;
   due_reason: string;
   created_at: string;
+  payment_status: string;
 }
 
 export function DueListModal({ isOpen, onClose }) {
@@ -55,35 +58,75 @@ export function DueListModal({ isOpen, onClose }) {
     filterSales();
   }, [dueSales, searchTerm, dateFilter]);
 
-  const fetchDueSales = async () => {
-    setIsLoading(true);
-    try {
-      const sales = await api.getSales();
-      const due = sales.filter((sale: any) => 
-        sale.payment_status === 'partial' && (sale.due_amount || 0) > 0
-      ).map((sale: any) => ({
+ const fetchDueSales = async () => {
+  setIsLoading(true);
+  try {
+    const sales = await api.getSales();
+    
+    // Fetch payments for each sale to calculate accurate due
+    const salesWithPayments = await Promise.all(
+      sales.map(async (sale: any) => {
+        try {
+          const payments = await api.getSalePayments(sale.id);
+          
+          // Calculate total paid from payments
+          let totalPaid = 0;
+          if (payments && payments.length > 0) {
+            totalPaid = payments.reduce((sum, p) => {
+              if (p.amount > 0) return sum + p.amount;
+              return sum;
+            }, 0);
+          } else {
+            totalPaid = parseFloat(sale.paid_amount) || 0;
+          }
+          
+          const total = parseFloat(sale.total) || 0;
+          const returnedAmount = parseFloat(sale.total_returned_amount) || 0;
+          const effectiveTotal = total - returnedAmount;
+          const dueAmount = effectiveTotal - totalPaid;
+          
+          return {
+            ...sale,
+            calculated_due: dueAmount > 0 ? dueAmount : 0,
+            total_paid_from_payments: totalPaid
+          };
+        } catch (error) {
+          console.error(`Failed to fetch payments for sale ${sale.id}:`, error);
+          return { ...sale, calculated_due: 0, total_paid_from_payments: 0 };
+        }
+      })
+    );
+    
+    // Filter sales with calculated due > 0
+    const due = salesWithPayments
+      .filter((sale: any) => sale.calculated_due > 0)
+      .map((sale: any) => ({
         id: sale.id,
         receipt_number: sale.receipt_number,
         customer_name: sale.customer_name || "Walk-in Customer",
         customer_phone: sale.customer_phone || "N/A",
-        total: parseFloat(sale.total),
-        paid_amount: parseFloat(sale.paid_amount) || 0,
-        due_amount: parseFloat(sale.due_amount) || 0,
+        total: parseFloat(sale.total) || 0,
+        paid_amount: sale.total_paid_from_payments,
+        due_amount: sale.calculated_due,
         due_date: sale.due_date,
         due_reason: sale.due_reason,
         created_at: sale.created_at,
+        payment_status: sale.payment_status,
       }));
-      
-      setDueSales(due);
-      const total = due.reduce((sum, sale) => sum + sale.due_amount, 0);
-      setTotalDue(total);
-    } catch (error) {
-      console.error("Failed to fetch due sales:", error);
-      toast({ title: "Error", description: "Failed to load due list", variant: "destructive" });
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    
+    console.log("Due sales found (calculated):", due.length);
+    console.log("Due sales details:", due);
+    
+    setDueSales(due);
+    const total = due.reduce((sum, sale) => sum + sale.due_amount, 0);
+    setTotalDue(total);
+  } catch (error) {
+    console.error("Failed to fetch due sales:", error);
+    toast({ title: "Error", description: "Failed to load due list", variant: "destructive" });
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const filterSales = () => {
     let filtered = [...dueSales];
@@ -139,10 +182,12 @@ export function DueListModal({ isOpen, onClose }) {
       return;
     }
     
-    const message = `🔔 *Payment Reminder* 🔔%0A%0A` +
+    const isOverdue = sale.due_date && new Date(sale.due_date) < new Date();
+    
+    const message = `${isOverdue ? '🔴 *OVERDUE PAYMENT REMINDER* 🔴%0A%0A' : '🔔 *Payment Reminder* 🔔%0A%0A'}` +
       `Dear ${sale.customer_name},%0A%0A` +
       `This is a reminder that you have an outstanding payment of *${formatPKR(sale.due_amount)}* for invoice *${sale.receipt_number}*.%0A%0A` +
-      `📅 Due Date: ${sale.due_date ? new Date(sale.due_date).toLocaleDateString() : 'Not specified'}%0A` +
+      `📅 Due Date: ${sale.due_date ? new Date(sale.due_date).toLocaleDateString() : 'Not specified'}${isOverdue ? ' ⚠️ OVERDUE' : ''}%0A` +
       `💰 Total Amount: ${formatPKR(sale.total)}%0A` +
       `✅ Already Paid: ${formatPKR(sale.paid_amount)}%0A` +
       `⚠️ Remaining Due: ${formatPKR(sale.due_amount)}%0A%0A` +
@@ -169,6 +214,7 @@ export function DueListModal({ isOpen, onClose }) {
           th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
           th { background-color: #f2f2f2; }
           .total { font-weight: bold; margin-top: 20px; text-align: right; }
+          .overdue { color: red; }
         </style>
       </head>
       <body>
@@ -177,10 +223,12 @@ export function DueListModal({ isOpen, onClose }) {
         <p>Filter: ${dateFilter === 'today' ? 'Today' : dateFilter === 'tomorrow' ? 'Tomorrow' : dateFilter === 'week' ? 'Next 7 Days' : 'All Due'}</p>
         <table>
           <thead>
-            <tr><th>Receipt #</th><th>Customer</th><th>Phone</th><th>Total</th><th>Paid</th><th>Due</th><th>Due Date</th></tr>
+            <tr><th>Receipt #</th><th>Customer</th><th>Phone</th><th>Total</th><th>Paid</th><th>Due</th><th>Due Date</th><th>Status</th></tr>
           </thead>
           <tbody>
-            ${filteredSales.map(sale => `
+            ${filteredSales.map(sale => {
+              const isOverdue = sale.due_date && new Date(sale.due_date) < new Date();
+              return `
               <tr>
                 <td>${sale.receipt_number}</td>
                 <td>${sale.customer_name}</td>
@@ -188,9 +236,11 @@ export function DueListModal({ isOpen, onClose }) {
                 <td>${formatPKR(sale.total)}</td>
                 <td>${formatPKR(sale.paid_amount)}</td>
                 <td>${formatPKR(sale.due_amount)}</td>
-                <td>${sale.due_date ? new Date(sale.due_date).toLocaleDateString() : '-'}</td>
+                <td${isOverdue ? ' class="overdue"' : ''}>${sale.due_date ? new Date(sale.due_date).toLocaleDateString() : '-'}${isOverdue ? ' (OVERDUE)' : ''}</td>
+                <td>${isOverdue ? 'OVERDUE' : 'PENDING'}</td>
               </tr>
-            `).join('')}
+              `;
+            }).join('')}
           </tbody>
         </table>
         <div class="total">Total Due: ${formatPKR(filteredSales.reduce((sum, s) => sum + s.due_amount, 0))}</div>
@@ -204,17 +254,21 @@ export function DueListModal({ isOpen, onClose }) {
   };
 
   const exportToCSV = () => {
-    const headers = ['Receipt #', 'Customer Name', 'Phone', 'Total Amount', 'Paid Amount', 'Due Amount', 'Due Date', 'Reason'];
-    const rows = filteredSales.map(sale => [
-      sale.receipt_number,
-      sale.customer_name,
-      sale.customer_phone,
-      sale.total,
-      sale.paid_amount,
-      sale.due_amount,
-      sale.due_date ? new Date(sale.due_date).toLocaleDateString() : '',
-      sale.due_reason || ''
-    ]);
+    const headers = ['Receipt #', 'Customer Name', 'Phone', 'Total Amount', 'Paid Amount', 'Due Amount', 'Due Date', 'Status', 'Reason'];
+    const rows = filteredSales.map(sale => {
+      const isOverdue = sale.due_date && new Date(sale.due_date) < new Date();
+      return [
+        sale.receipt_number,
+        sale.customer_name,
+        sale.customer_phone,
+        sale.total,
+        sale.paid_amount,
+        sale.due_amount,
+        sale.due_date ? new Date(sale.due_date).toLocaleDateString() : '',
+        isOverdue ? 'OVERDUE' : 'PENDING',
+        sale.due_reason || ''
+      ];
+    });
     
     const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv' });
@@ -237,8 +291,8 @@ export function DueListModal({ isOpen, onClose }) {
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center justify-between">
-            <span>Due Payments List</span>
+          <DialogTitle className="flex items-center justify-between flex-wrap gap-2">
+            <span>💰 Due Payments List ({dueSales.length} invoices)</span>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={printDueList}>
                 <Printer className="h-4 w-4 mr-2" />
@@ -255,19 +309,19 @@ export function DueListModal({ isOpen, onClose }) {
         <div className="space-y-4">
           {/* Summary Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card>
+            <Card className="bg-orange-50">
               <CardContent className="p-4">
                 <p className="text-sm text-muted-foreground">Total Due Amount</p>
                 <p className="text-2xl font-bold text-orange-600">{formatPKR(totalDue)}</p>
               </CardContent>
             </Card>
-            <Card>
+            <Card className="bg-blue-50">
               <CardContent className="p-4">
                 <p className="text-sm text-muted-foreground">Number of Due Invoices</p>
                 <p className="text-2xl font-bold text-blue-600">{dueSales.length}</p>
               </CardContent>
             </Card>
-            <Card>
+            <Card className="bg-red-50">
               <CardContent className="p-4">
                 <p className="text-sm text-muted-foreground">Overdue</p>
                 <p className="text-2xl font-bold text-red-600">
@@ -287,17 +341,17 @@ export function DueListModal({ isOpen, onClose }) {
                 className="w-full"
               />
             </div>
-            <div className="flex gap-2">
-              <Button variant={dateFilter === "today" ? "default" : "outline"} onClick={() => setDateFilter("today")}>
+            <div className="flex gap-2 flex-wrap">
+              <Button variant={dateFilter === "today" ? "default" : "outline"} onClick={() => setDateFilter("today")} size="sm">
                 Today
               </Button>
-              <Button variant={dateFilter === "tomorrow" ? "default" : "outline"} onClick={() => setDateFilter("tomorrow")}>
+              <Button variant={dateFilter === "tomorrow" ? "default" : "outline"} onClick={() => setDateFilter("tomorrow")} size="sm">
                 Tomorrow
               </Button>
-              <Button variant={dateFilter === "week" ? "default" : "outline"} onClick={() => setDateFilter("week")}>
+              <Button variant={dateFilter === "week" ? "default" : "outline"} onClick={() => setDateFilter("week")} size="sm">
                 Next 7 Days
               </Button>
-              <Button variant={dateFilter === "all" ? "default" : "outline"} onClick={() => setDateFilter("all")}>
+              <Button variant={dateFilter === "all" ? "default" : "outline"} onClick={() => setDateFilter("all")} size="sm">
                 All Due
               </Button>
             </div>
@@ -307,7 +361,11 @@ export function DueListModal({ isOpen, onClose }) {
           {isLoading ? (
             <div className="text-center py-8">Loading...</div>
           ) : filteredSales.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">No due payments found</div>
+            <div className="text-center py-8 text-muted-foreground">
+              <CheckCircle className="h-12 w-12 mx-auto mb-2 text-green-500" />
+              <p>No due payments found</p>
+              <p className="text-sm">All payments are settled</p>
+            </div>
           ) : (
             <>
               <div className="border rounded-lg overflow-hidden">
@@ -338,7 +396,7 @@ export function DueListModal({ isOpen, onClose }) {
                           <td className="p-3">
                             <span className={isOverdue ? "text-red-600 font-bold" : ""}>
                               {sale.due_date ? new Date(sale.due_date).toLocaleDateString() : '-'}
-                              {isOverdue && " (Overdue)"}
+                              {isOverdue && <Badge variant="destructive" className="ml-2">Overdue</Badge>}
                             </span>
                           </td>
                           <td className="p-3 text-center">
@@ -362,7 +420,7 @@ export function DueListModal({ isOpen, onClose }) {
               
               {/* Pagination */}
               {totalPages > 1 && (
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="text-sm text-muted-foreground">
                     Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredSales.length)} of {filteredSales.length}
                   </div>

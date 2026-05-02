@@ -13,6 +13,8 @@ import Sales from "@/pages/sales";
 import Purchases from "@/pages/purchases";
 import Suppliers from "@/pages/suppliers";
 import NetProfit from "@/pages/net-profit";
+import TaxManagement from "@/pages/tax-management";
+
 import Categories from "@/pages/categories";
 import TransactionLogs from "@/pages/transaction-logs";
 import ReceiptManagement from "@/pages/receipt-management";
@@ -122,6 +124,8 @@ function MainContent({ path }: { path: string }) {
       return <SettingsPage />;
     case '/profile':
       return <Profile />;
+    case '/tax-management':
+      return <TaxManagement />;
     case '/user-guide':
       return <UserGuide />;
     case '/terms-policies':

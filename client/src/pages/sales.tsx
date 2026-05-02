@@ -1,20 +1,18 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatPKR } from "@/lib/currency";
 import { format } from "date-fns";
-import { Eye, Download, ChevronRight, ChevronLeft, RotateCcw, Keyboard, MessageCircle, ShoppingBag, TrendingUp, AlertCircle, CheckCircle, Clock, RefreshCw, Wallet } from "lucide-react";
+import { Eye, Download, ChevronRight, ChevronLeft, RotateCcw, Keyboard, MessageCircle, ShoppingBag, TrendingUp, AlertCircle, CheckCircle, Clock, RefreshCw, TrendingDown, Package, Users, Wallet, Banknote, CreditCard, Smartphone } from "lucide-react";
 import { useHeader } from "@/contexts/HeaderContext";
 import { useLocation } from "wouter";
 import { getPaymentMethodColor } from "@/utils/GetPaymentMethodColor";
@@ -41,6 +39,19 @@ const shortcuts = [
   { key: "→", description: "Next Page" },
 ];
 
+// Helper to format time in Pakistan timezone
+// Helper to format time in Pakistan timezone (UTC+5)
+const formatPakistanTime = (dateString: string) => {
+  const date = new Date(dateString);
+  // Add 5 hours for Pakistan time (UTC+5)
+  const pakistanTime = new Date(date.getTime() + (5 * 60 * 60 * 1000));
+  return {
+    date: format(pakistanTime, 'dd/MM/yyyy'),
+    time: format(pakistanTime, 'hh:mm:ss a'),
+    full: format(pakistanTime, 'dd/MM/yyyy hh:mm:ss a')
+  };
+};
+
 export default function Sales() {
   const pageSize = 50;
   const [location] = useLocation();
@@ -48,9 +59,10 @@ export default function Sales() {
   const { navigateTo } = useNavigation();
   const { setTitle, setSubtitle } = useHeader();
   const { loginType } = useLoginType();
+  const queryClient = useQueryClient();
   const mainContentRef = useRef<HTMLDivElement>(null);
   const isFirstLoadRef = useRef(true);
-
+  const [showAllCards, setShowAllCards] = useState(false);
   // State
   const [filters, setFilters] = useState(() => {
     try {
@@ -63,14 +75,16 @@ export default function Sales() {
           paymentMethod: parsed.paymentMethod || "",
           search: parsed.search || "",
           returnStatus: parsed.returnStatus || "all",
+          paymentStatus: parsed.paymentStatus || "all",
           minAmount: parsed.minAmount || "",
           maxAmount: parsed.maxAmount || "",
+          customerName: parsed.customerName || "",
         };
       }
     } catch (error) { }
     return {
       startDate: "", endDate: "", paymentMethod: "", search: "",
-      returnStatus: "all", minAmount: "", maxAmount: "",
+      returnStatus: "all", paymentStatus: "all", minAmount: "", maxAmount: "", customerName: ""
     };
   });
 
@@ -88,61 +102,74 @@ export default function Sales() {
   const [whatsappNumber, setWhatsappNumber] = useState("");
   const [shopPhoneNo, setShopPhoneNo] = useState("");
   const [showDueList, setShowDueList] = useState(false);
-  const [showShopOwesList, setShowShopOwesList] = useState(false);
   const [selectedSaleForPayment, setSelectedSaleForPayment] = useState<any>(null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-// Replace ALL THREE helper functions with these:
+  const [showOverpaymentModal, setShowOverpaymentModal] = useState(false);
+  const [overpaymentInfo, setOverpaymentInfo] = useState<any>(null);
+  const [cashInHand, setCashInHand] = useState(0);
 
-// Helper to calculate total customer paid from payments (positive amounts only)
-const getTotalCustomerPaid = (sale: any) => {
-  if (!sale.payments) return sale.paid_amount || 0;
-  
-  return sale.payments.reduce((total, payment) => {
-    if (payment.amount > 0) {
-      return total + payment.amount;
+  // Helper functions
+  const getTotalCustomerPaid = (sale: any) => {
+    if (!sale.payments) return sale.paid_amount || 0;
+    return sale.payments.reduce((total, payment) => {
+      if (payment.amount > 0) return total + payment.amount;
+      return total;
+    }, 0);
+  };
+
+  // Replace the getCustomerDue function with this:
+  const getCustomerDue = (sale: any) => {
+    // First check payments array if available
+    let totalPaid = 0;
+    if (sale.payments && sale.payments.length > 0) {
+      totalPaid = sale.payments.reduce((sum, p) => {
+        if (p.amount > 0) return sum + p.amount;
+        return sum;
+      }, 0);
+    } else {
+      // Fallback to paid_amount field
+      totalPaid = sale.paid_amount || 0;
     }
-    return total;
-  }, 0);
-};
 
-// Helper to calculate total refunded to customer (negative amounts only)
-const getTotalRefunded = (sale: any) => {
-  if (!sale.payments) return 0;
-  
-  return sale.payments.reduce((total, payment) => {
-    if (payment.amount < 0) {
-      return total + Math.abs(payment.amount);
-    }
-    return total;
-  }, 0);
-};
+    const saleTotal = parseFloat(sale.total) || 0;
+    const totalReturned = parseFloat(sale.total_returned_amount) || 0;
+    const effectiveTotal = saleTotal - totalReturned;
+    const due = effectiveTotal - totalPaid;
 
-// Helper to calculate net position 
-// RESULT > 0 = Customer owes shop (Customer needs to pay more)
-// RESULT < 0 = Shop owes customer (Shop needs to refund)
-// RESULT = 0 = Fully settled
-const getNetPosition = (sale: any) => {
-  const totalPaid = getTotalCustomerPaid(sale);
-  const totalRefunded = getTotalRefunded(sale);
-  const saleTotal = parseFloat(sale.total) || 0;
-  const totalReturned = parseFloat(sale.total_returned_amount) || 0;
-  
-  // Net amount customer has effectively paid (after refunds)
-  const netCustomerPayment = totalPaid - totalRefunded;
-  
-  // Effective sale total after returns
-  const effectiveSaleTotal = saleTotal - totalReturned;
-  
-  // Calculate net position: Positive = customer owes, Negative = shop owes
-  const netPosition = effectiveSaleTotal - netCustomerPayment;
-  
-  return netPosition;
-};
+    // If due is less than 0.01 (rounding), treat as 0
+    return due > 0.01 ? due : 0;
+  };
+
+// Calculate cash in hand from all cash payments (including refunds)
+// Calculate cash in hand from payments only (most reliable)
+const calculateCashInHand = useCallback((sales: any[]) => {
+    let totalCashReceived = 0;
+    let totalCashRefunded = 0;
+
+    sales.forEach(sale => {
+        if (sale.payments && sale.payments.length > 0) {
+            sale.payments.forEach(payment => {
+                if (payment.payment_method === 'cash') {
+                    if (payment.amount > 0) {
+                        totalCashReceived += payment.amount;
+                    } else if (payment.amount < 0) {
+                        totalCashRefunded += Math.abs(payment.amount);
+                    }
+                }
+            });
+        }
+    });
+
+    const cashInHand = totalCashReceived - totalCashRefunded;
+    console.log('Cash Calculation (from payments only):', { totalCashReceived, totalCashRefunded, cashInHand });
+    return cashInHand;
+}, []);
 
   // Fetch data
   const { isLoading, refetch } = useQuery<any[]>({
     queryKey: ["sales", location],
     queryFn: async () => {
+      console.log("=== FETCHING SALES DATA ===");
       const result = await api.getSales();
       let allSales = [];
 
@@ -153,8 +180,8 @@ const getNetPosition = (sale: any) => {
       } else {
         return [];
       }
+      console.log(allSales)
 
-      // Fetch payments for each sale
       for (const sale of allSales) {
         try {
           const payments = await api.getSalePayments(sale.id);
@@ -166,17 +193,23 @@ const getNetPosition = (sale: any) => {
 
       allSales.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       setAllSalesData(allSales);
+
+      // Calculate cash in hand
+      const cashTotal = calculateCashInHand(allSales);
+      setCashInHand(cashTotal);
+
       setRenderKey(prev => prev + 1);
       return allSales;
     },
     refetchOnMount: true,
     refetchOnWindowFocus: true,
+    staleTime: 0,
+    cacheTime: 0,
   });
 
-  // Filter and paginate
+  // Apply filters
   const filteredData = useMemo(() => {
     if (allSalesData.length === 0) return [];
-
     let filtered = [...allSalesData];
 
     if (filters.search) {
@@ -188,8 +221,19 @@ const getNetPosition = (sale: any) => {
       );
     }
 
+    if (filters.customerName) {
+      const customerName = filters.customerName.toLowerCase();
+      filtered = filtered.filter(sale =>
+        sale.customer_name?.toLowerCase().includes(customerName)
+      );
+    }
+
     if (filters.returnStatus !== "all") {
       filtered = filtered.filter(sale => sale.return_status === filters.returnStatus);
+    }
+
+    if (filters.paymentStatus !== "all") {
+      filtered = filtered.filter(sale => sale.payment_status === filters.paymentStatus);
     }
 
     if (filters.startDate) {
@@ -222,17 +266,40 @@ const getNetPosition = (sale: any) => {
     return filteredData.slice(start, end);
   }, [filteredData, currentPage]);
 
-  // Statistics
-  const totalSalesAmount = filteredData.reduce((sum, sale) => sum + parseFloat(sale.total || 0), 0);
+  // Statistics for cards
+  // Exclude: cancelled, refunded, AND fully returned
+  const totalSalesAmount = filteredData
+    .filter(sale => {
+      // Exclude cancelled
+      if (sale.payment_status === 'cancelled') return false;
+      // Exclude refunded  
+      if (sale.payment_status === 'refunded') return false;
+      // Exclude fully returned
+      if (sale.return_status === 'full') return false;
+      // Include all others (completed, partial, pending, no return, partial return)
+      return true;
+    })
+    .reduce((sum, sale) => sum + parseFloat(sale.total || 0), 0);
   const totalReturnedAmount = filteredData.reduce((sum, sale) => sum + (parseFloat(sale.total_returned_amount) || 0), 0);
   const netRevenue = totalSalesAmount - totalReturnedAmount;
+
   const completedSales = filteredData.filter(sale => sale.payment_status === 'completed');
-  const totalProfit = filteredData.filter(sale => sale.payment_status !== 'cancelled').reduce((sum, sale) => sum + (parseFloat(sale.total_profit) || 0), 0);
   const pendingSales = filteredData.filter(sale => sale.payment_status === 'pending');
   const cancelledSales = filteredData.filter(sale => sale.payment_status === 'cancelled');
+  const refundedSales = filteredData.filter(sale => sale.payment_status === 'refunded');
+
   const fullyReturned = filteredData.filter(sale => sale.return_status === 'full');
+  const partiallyReturned = filteredData.filter(sale => sale.return_status === 'partial');
+  const noReturn = filteredData.filter(sale => sale.return_status === 'none' || !sale.return_status);
+
+  const totalProfit = filteredData
+    .filter(sale => sale.payment_status !== 'cancelled')
+    .reduce((sum, sale) => sum + (parseFloat(sale.total_profit) || 0), 0);
+
   const totalCost = totalSalesAmount - totalProfit;
   const roi = totalCost > 0 ? (totalProfit / totalCost) * 100 : 0;
+  const dueSalesCount = filteredData.filter(sale => getCustomerDue(sale) > 0).length;
+  const totalCustomerOwes = filteredData.reduce((sum, sale) => sum + getCustomerDue(sale), 0);
 
   // Page validation
   const totalPages = Math.ceil(filteredData.length / pageSize);
@@ -246,11 +313,33 @@ const getNetPosition = (sale: any) => {
 
   // Save state
   useEffect(() => {
-    if (!isFirstLoadRef.current) {
+    if (!isFirstLoadRef.current && !isLoading) {
       localStorage.setItem(STORAGE_KEYS.SALES_PAGE, currentPage.toString());
       localStorage.setItem(STORAGE_KEYS.SALES_FILTERS, JSON.stringify(filters));
+    } else {
+      isFirstLoadRef.current = false;
     }
-  }, [currentPage, filters]);
+  }, [currentPage, filters, isLoading]);
+
+  // Restore scroll position
+  useEffect(() => {
+    if (!isLoading && paginatedData.length > 0 && mainContentRef.current) {
+      const savedScrollPosition = localStorage.getItem(STORAGE_KEYS.SALES_SCROLL_POSITION);
+      if (savedScrollPosition) {
+        setTimeout(() => {
+          if (mainContentRef.current) {
+            mainContentRef.current.scrollTo({ top: parseInt(savedScrollPosition, 10), behavior: 'auto' });
+          }
+        }, 100);
+      }
+    }
+  }, [isLoading, paginatedData]);
+
+  const handleScroll = useCallback(() => {
+    if (mainContentRef.current && !isFirstLoadRef.current) {
+      localStorage.setItem(STORAGE_KEYS.SALES_SCROLL_POSITION, mainContentRef.current.scrollTop.toString());
+    }
+  }, []);
 
   // Load shop phone
   useEffect(() => {
@@ -290,6 +379,7 @@ const getNetPosition = (sale: any) => {
   const handleFilterChange = (key: string, value: any) => {
     setFilters(prev => ({ ...prev, [key]: value }));
     setCurrentPage(1);
+    isFirstLoadRef.current = false;
   };
 
   const handleResetFilters = () => {
@@ -298,10 +388,9 @@ const getNetPosition = (sale: any) => {
     localStorage.removeItem(STORAGE_KEYS.SALES_SCROLL_POSITION);
     setFilters({
       startDate: "", endDate: "", paymentMethod: "", search: "",
-      returnStatus: "all", minAmount: "", maxAmount: ""
+      returnStatus: "all", paymentStatus: "all", minAmount: "", maxAmount: "", customerName: ""
     });
     setCurrentPage(1);
-    isFirstLoadRef.current = true;
     setRenderKey(prev => prev + 1);
     toast({ title: "Reset", description: "All filters and pagination have been reset" });
     refetch();
@@ -309,21 +398,26 @@ const getNetPosition = (sale: any) => {
 
   const handleExport = async () => {
     try {
-      const headers = ['Receipt No', 'Date', 'Customer Name', 'Phone', 'Total', 'Payment Method', 'Status', 'Return Status', 'Returned Amount', 'Profit'];
+      const headers = ['Receipt No', 'Date', 'Time', 'Customer Name', 'Phone', 'Subtotal', 'Tax', 'Discount', 'Total', 'Payment Method', 'Payment Status', 'Return Status', 'Returned Amount', 'Profit'];
       const csvRows = [headers];
 
       for (const sale of filteredData) {
+        const { date, time } = formatPakistanTime(sale.created_at);
         csvRows.push([
           `"${sale.receipt_number || ''}"`,
-          `"${format(new Date(sale.created_at), 'dd/MM/yyyy HH:mm')}"`,
+          `"${date}"`,
+          `"${time}"`,
           `"${sale.customer_name || 'Walk-in Customer'}"`,
           `"${sale.customer_phone || ''}"`,
+          sale.subtotal?.toString() || '0',
+          sale.tax?.toString() || '0',
+          sale.discount?.toString() || '0',
           sale.total?.toString() || '0',
           `"${sale.payment_method || ''}"`,
           `"${sale.payment_status || ''}"`,
           `"${sale.return_status || 'none'}"`,
           sale.total_returned_amount?.toString() || '0',
-          sale.total_profit?.toString() || '0'
+          loginType === "admin" ? (sale.total_profit?.toString() || '0') : 'Hidden'
         ]);
       }
 
@@ -356,17 +450,16 @@ const getNetPosition = (sale: any) => {
 
   const sendSaleWhatsApp = (sale: any) => {
     const paidAmount = sale.paid_amount || 0;
-    const netPos = getNetPosition(sale);
+    const due = getCustomerDue(sale);
+    const { date, time } = formatPakistanTime(sale.created_at);
     let statusMessage = "";
-    if (netPos > 0) {
-      statusMessage = `\n⚠️ *Remaining Due: ${formatPKR(netPos)}*`;
-    } else if (netPos < 0) {
-      statusMessage = `\n💰 *Shop Owes: ${formatPKR(Math.abs(netPos))}*`;
+    if (due > 0) {
+      statusMessage = `\n⚠️ *Remaining Due: ${formatPKR(due)}*`;
     }
 
     const message = `🧾 *INVOICE* 🧾%0A%0A` +
       `Receipt: ${sale.receipt_number}%0A` +
-      `Date: ${format(new Date(sale.created_at), 'dd/MM/yyyy HH:mm')}%0A` +
+      `Date: ${date} at ${time}%0A` +
       `Customer: ${sale.customer_name || 'Walk-in Customer'}%0A%0A` +
       `💰 Total Amount: ${formatPKR(sale.total)}%0A` +
       `✅ Paid: ${formatPKR(paidAmount)}%0A` +
@@ -377,8 +470,7 @@ const getNetPosition = (sale: any) => {
     window.open(whatsappUrl, '_blank');
   };
 
-  // Replace the PaymentHistoryModal component in your Sales.tsx with this corrected version:
-
+  // PaymentHistoryModal Component
   const PaymentHistoryModal = ({ sale, isOpen, onClose, onPaymentRecorded }) => {
     const [paymentAmount, setPaymentAmount] = useState(0);
     const [paymentMethod, setPaymentMethod] = useState("cash");
@@ -387,43 +479,26 @@ const getNetPosition = (sale: any) => {
     const [payments, setPayments] = useState<any[]>([]);
     const { toast } = useToast();
 
-    // Calculate totals from payments
     const calculateTotals = useCallback(() => {
       let customerPaid = 0;
-      let shopRefunded = 0;
-
       payments.forEach(payment => {
-        if (payment.amount > 0) {
-          customerPaid += payment.amount;
-        } else if (payment.amount < 0) {
-          shopRefunded += Math.abs(payment.amount);
-        }
+        if (payment.amount > 0) customerPaid += payment.amount;
       });
-
-      return { customerPaid, shopRefunded };
+      return { customerPaid };
     }, [payments]);
 
-    const { customerPaid, shopRefunded } = calculateTotals();
-
+    const { customerPaid } = calculateTotals();
     const saleTotal = parseFloat(sale?.total) || 0;
     const returnedAmount = parseFloat(sale?.total_returned_amount) || 0;
     const effectiveTotal = saleTotal - returnedAmount;
-    const effectivePaid = customerPaid - shopRefunded;
-    const balance = effectiveTotal - effectivePaid;
-    const customerDue = balance > 0 ? balance : 0;
-    const shopOwe = balance < 0 ? Math.abs(balance) : 0;
+    const customerDue = effectiveTotal - customerPaid > 0 ? effectiveTotal - customerPaid : 0;
 
     useEffect(() => {
-      if (sale && isOpen && sale.id) {
-        fetchPayments();
-      }
+      if (sale && isOpen && sale.id) fetchPayments();
     }, [sale, isOpen]);
 
     const fetchPayments = async () => {
-      if (!sale?.id) {
-        console.error('Cannot fetch payments: sale.id is missing', sale);
-        return;
-      }
+      if (!sale?.id) return;
       try {
         const result = await api.getSalePayments(sale.id);
         setPayments(result || []);
@@ -432,292 +507,217 @@ const getNetPosition = (sale: any) => {
       }
     };
 
-    const handleRecordCustomerPayment = async () => {
+    const handleRecordPayment = async () => {
       if (!sale?.id) {
-        toast({ title: "Error", description: "Sale ID is missing. Cannot record payment.", variant: "destructive" });
-        console.error('Sale ID is missing:', sale);
+        toast({ title: "Error", description: "Sale ID is missing", variant: "destructive" });
         return;
       }
-
       if (paymentAmount <= 0) {
         toast({ title: "Invalid Amount", description: "Please enter a valid amount", variant: "destructive" });
         return;
       }
 
-      // if (paymentAmount > customerDue) {
-      //   toast({ title: "Amount Exceeds Due", description: `Maximum due is ${formatPKR(customerDue)}`, variant: "destructive" });
-      //   return;
-      // }
+      if (paymentAmount > customerDue && customerDue > 0) {
+        const changeAmount = paymentAmount - customerDue;
+        setOverpaymentInfo({
+          sale: sale,
+          paymentAmount: paymentAmount,
+          dueAmount: customerDue,
+          changeAmount: changeAmount,
+          paymentMethod: paymentMethod,
+          notes: paymentNotes
+        });
+        setShowOverpaymentModal(true);
+        return;
+      }
 
+      await processPayment(paymentAmount);
+    };
+
+    const processPayment = async (amount: number) => {
       setIsSubmitting(true);
       try {
-        const newCustomerPaid = customerPaid + paymentAmount;
-        const newEffectivePaid = newCustomerPaid - shopRefunded;
-        const newBalance = effectiveTotal - newEffectivePaid;
-        const newDueAmount = newBalance > 0 ? newBalance : 0;
+        const newCustomerPaid = customerPaid + amount;
+        const newDue = effectiveTotal - newCustomerPaid > 0 ? effectiveTotal - newCustomerPaid : 0;
 
-        // Create payment record
         await api.createSalePayment({
           saleId: sale.id,
-          amount: paymentAmount,
+          amount: amount,
           paymentMethod: paymentMethod,
           notes: paymentNotes || `Payment received from customer`,
-          remainingDue: newDueAmount,
+          remainingDue: newDue,
           payment_date: new Date().toISOString()
         });
 
-        // Update sale
         await api.updateSale(sale.id, {
           paid_amount: newCustomerPaid,
-          due_amount: newDueAmount,
-          payment_status: newBalance === 0 ? "completed" : (newBalance < 0 ? "refunded" : "partial")
+          due_amount: newDue,
+          payment_status: newDue === 0 ? "completed" : "partial"
         });
 
-        toast({ title: "Payment Received", description: `${formatPKR(paymentAmount)} recorded from customer` });
+        toast({ title: "Payment Received", description: `${formatPKR(amount)} recorded from customer` });
         setPaymentAmount(0);
         setPaymentNotes("");
         await fetchPayments();
         onPaymentRecorded();
         refetch();
+        queryClient.invalidateQueries({ queryKey: ["sales"] });
+
+        // Update cash in hand
+        if (paymentMethod === 'cash') {
+          const newCashTotal = cashInHand + amount;
+          setCashInHand(newCashTotal);
+        }
       } catch (error) {
-        console.error('Error in handleRecordCustomerPayment:', error);
         toast({ title: "Error", description: error.message, variant: "destructive" });
       } finally {
         setIsSubmitting(false);
       }
     };
 
-    const handleFullRefund = async () => {
-      if (!sale?.id) {
-        toast({ title: "Error", description: "Sale ID is missing. Cannot record refund.", variant: "destructive" });
-        return;
-      }
-
-      if (shopOwe <= 0) {
-        toast({ title: "No Refund", description: "No amount to refund", variant: "destructive" });
-        return;
-      }
+    const handleOverpaymentGiveChange = async () => {
+      if (!overpaymentInfo) return;
 
       setIsSubmitting(true);
       try {
-        const refundAmount = shopOwe;
-        const newShopRefunded = shopRefunded + refundAmount;
-        const newEffectivePaid = customerPaid - newShopRefunded;
-        const newBalance = effectiveTotal - newEffectivePaid;
+        const { sale, dueAmount, paymentMethod, notes } = overpaymentInfo;
 
         await api.createSalePayment({
           saleId: sale.id,
-          amount: -refundAmount,
+          amount: dueAmount,
           paymentMethod: paymentMethod,
-          notes: paymentNotes || `Full refund paid to customer`,
+          notes: notes || `Payment received. Customer paid ${formatPKR(overpaymentInfo.paymentAmount)}, change given: ${formatPKR(overpaymentInfo.changeAmount)}`,
           remainingDue: 0,
           payment_date: new Date().toISOString()
         });
 
         await api.updateSale(sale.id, {
-          due_amount: newBalance > 0 ? newBalance : 0,
-          payment_status: newBalance === 0 ? "completed" : (newBalance < 0 ? "refunded" : "partial")
+          paid_amount: customerPaid + dueAmount,
+          due_amount: 0,
+          payment_status: "completed"
         });
 
-        toast({ title: "Refund Paid", description: `${formatPKR(refundAmount)} refunded to customer` });
-        setPaymentAmount(0);
-        setPaymentNotes("");
+        toast({
+          title: "Payment Received",
+          description: `Received ${formatPKR(dueAmount)}. Change to return: ${formatPKR(overpaymentInfo.changeAmount)}`,
+          duration: 5000
+        });
+
         await fetchPayments();
         onPaymentRecorded();
         refetch();
+        queryClient.invalidateQueries({ queryKey: ["sales"] });
+
+        if (paymentMethod === 'cash') {
+          const newCashTotal = cashInHand + dueAmount;
+          setCashInHand(newCashTotal);
+        }
+
+        setShowOverpaymentModal(false);
+        setOverpaymentInfo(null);
+        setPaymentAmount(0);
+        setPaymentNotes("");
       } catch (error) {
-        console.error('Error in handleFullRefund:', error);
         toast({ title: "Error", description: error.message, variant: "destructive" });
       } finally {
         setIsSubmitting(false);
       }
     };
 
-    const handlePartialRefund = async () => {
-      if (!sale?.id) {
-        toast({ title: "Error", description: "Sale ID is missing. Cannot record refund.", variant: "destructive" });
-        return;
-      }
-
-      if (paymentAmount <= 0 || paymentAmount > shopOwe) {
-        toast({ title: "Invalid Amount", description: `Please enter amount between 1 and ${formatPKR(shopOwe)}`, variant: "destructive" });
-        return;
-      }
-
-      setIsSubmitting(true);
-      try {
-        const newShopRefunded = shopRefunded + paymentAmount;
-        const newEffectivePaid = customerPaid - newShopRefunded;
-        const newBalance = effectiveTotal - newEffectivePaid;
-
-        await api.createSalePayment({
-          saleId: sale.id,
-          amount: -paymentAmount,
-          paymentMethod: paymentMethod,
-          notes: paymentNotes || `Partial refund paid to customer`,
-          remainingDue: 0,
-          payment_date: new Date().toISOString()
-        });
-
-        await api.updateSale(sale.id, {
-          due_amount: newBalance > 0 ? newBalance : 0,
-          payment_status: newBalance === 0 ? "completed" : (newBalance < 0 ? "refunded" : "partial")
-        });
-
-        toast({ title: "Partial Refund Paid", description: `${formatPKR(paymentAmount)} refunded to customer` });
-        setPaymentAmount(0);
-        setPaymentNotes("");
-        await fetchPayments();
-        onPaymentRecorded();
-        refetch();
-      } catch (error) {
-        console.error('Error in handlePartialRefund:', error);
-        toast({ title: "Error", description: error.message, variant: "destructive" });
-      } finally {
-        setIsSubmitting(false);
-      }
+    const handleOverpaymentAdjust = () => {
+      if (!overpaymentInfo) return;
+      setPaymentAmount(overpaymentInfo.dueAmount);
+      setShowOverpaymentModal(false);
+      setOverpaymentInfo(null);
     };
 
     return (
-      <Dialog open={isOpen} onOpenChange={onClose}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Transaction History - {sale?.receipt_number}</DialogTitle>
-          </DialogHeader>
+      <>
+        <Dialog open={isOpen} onOpenChange={onClose}>
+          <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Payment History - {sale?.receipt_number}</DialogTitle>
+            </DialogHeader>
 
-          <Tabs defaultValue="history" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="history">📋 History</TabsTrigger>
-              <TabsTrigger value="customer-pay">💳 Receive Payment</TabsTrigger>
-              <TabsTrigger value="shop-pay">💰 Pay Refund</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="history" className="space-y-4">
-              {/* Summary Card */}
-              <div className={`p-4 rounded-lg ${customerDue > 0 ? 'bg-red-50 border border-red-200' : shopOwe > 0 ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-200'}`}>
+            <div className="space-y-4">
+              <div className={`p-4 rounded-lg ${customerDue > 0 ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'}`}>
                 <div className="space-y-3">
                   <div className="flex justify-between items-center pb-2 border-b">
                     <span className="text-sm font-medium">Sale Total:</span>
                     <span className="font-bold text-lg">{formatPKR(saleTotal)}</span>
                   </div>
-
                   {returnedAmount > 0 && (
                     <div className="flex justify-between items-center text-red-600">
                       <span className="text-sm font-medium">Returns:</span>
                       <span className="font-bold">-{formatPKR(returnedAmount)}</span>
                     </div>
                   )}
-
                   <div className="flex justify-between items-center pt-1">
                     <span className="text-sm font-medium">Effective Total:</span>
                     <span className="font-semibold">{formatPKR(effectiveTotal)}</span>
                   </div>
-
                   <div className="flex justify-between items-center text-blue-600">
-                    <span className="text-sm font-medium">Customer Paid:</span>
+                    <span className="text-sm font-medium">Total Paid:</span>
                     <span className="font-bold">+{formatPKR(customerPaid)}</span>
                   </div>
-
-                  {shopRefunded > 0 && (
-                    <div className="flex justify-between items-center text-orange-600">
-                      <span className="text-sm font-medium">Shop Refunded:</span>
-                      <span className="font-bold">-{formatPKR(shopRefunded)}</span>
-                    </div>
-                  )}
-
                   <div className="flex justify-between items-center pt-2 border-t mt-2 bg-gray-100 -mx-4 px-4 py-3 rounded">
-                    <span className="font-bold text-base">Net Position:</span>
+                    <span className="font-bold text-base">Remaining Due:</span>
                     {customerDue > 0 ? (
                       <div className="text-right">
                         <span className="font-bold text-red-600 text-xl">{formatPKR(customerDue)}</span>
                         <p className="text-xs text-red-500">Customer needs to pay</p>
                       </div>
-                    ) : shopOwe > 0 ? (
-                      <div className="text-right">
-                        <span className="font-bold text-green-600 text-xl">{formatPKR(shopOwe)}</span>
-                        <p className="text-xs text-green-500">Shop needs to refund</p>
-                      </div>
                     ) : (
-                      <span className="font-bold text-green-600">✓ Fully Settled</span>
+                      <span className="font-bold text-green-600">✓ Fully Paid</span>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* Formula Explanation */}
-              <div className="bg-blue-50 p-3 rounded-lg text-xs">
-                <p className="font-medium mb-1">📊 Calculation:</p>
-                <p className="text-muted-foreground">
-                  Net Position = (Sale Total - Returns) - (Customer Paid - Shop Refunded)
-                </p>
-                <p className="text-muted-foreground mt-1">
-                  Positive = Customer owes | Negative = Shop owes
-                </p>
-              </div>
-
-              {/* Payment History */}
               {payments.length > 0 && (
                 <div>
                   <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
                     <Clock className="h-4 w-4" />
-                    Transaction History ({payments.length} entries)
+                    Payment History ({payments.length} entries)
                   </h4>
                   <div className="space-y-2 max-h-96 overflow-y-auto">
-                    {payments
-                      .sort((a, b) => new Date(b.payment_date).getTime() - new Date(a.payment_date).getTime())
-                      .map((payment) => {
-                        const isRefund = payment.amount < 0;
-                        const isInitial = payment.notes?.includes('Initial payment');
-                        return (
-                          <div key={payment.id} className={`border rounded-lg p-3 ${isRefund ? 'bg-green-50 border-green-200' : 'bg-blue-50 border-blue-200'}`}>
-                            <div className="flex justify-between items-start">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 flex-wrap mb-2">
-                                  <Badge className={isRefund ? 'bg-green-600' : 'bg-blue-600'}>
-                                    {isRefund ? '💰 SHOP → CUSTOMER' : '💳 CUSTOMER → SHOP'}
-                                  </Badge>
-                                  {isInitial && <Badge variant="outline" className="text-xs">Initial</Badge>}
-                                  <span className="text-xs text-muted-foreground">
-                                    {new Date(payment.payment_date).toLocaleString()}
-                                  </span>
-                                </div>
-                                <p className="text-sm">
-                                  <strong>Method:</strong> {payment.payment_method?.toUpperCase()}
-                                </p>
-                                {payment.notes && (
-                                  <p className="text-sm text-muted-foreground mt-1">
-                                    📝 {payment.notes}
-                                  </p>
-                                )}
+                    {payments.sort((a, b) => new Date(b.payment_date).getTime() - new Date(a.payment_date).getTime()).map((payment) => {
+                      const isRefund = payment.amount < 0;
+                      if (isRefund) return null;
+                      const { date, time } = formatPakistanTime(payment.payment_date);
+                      return (
+                        <div key={payment.id} className="border rounded-lg p-3 bg-blue-50 border-blue-200">
+                          <div className="flex justify-between items-start">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 flex-wrap mb-2">
+                                <Badge className="bg-blue-600">💳 PAYMENT RECEIVED</Badge>
+                                <span className="text-xs text-muted-foreground">
+                                  {date} at {time}
+                                </span>
                               </div>
-                              <div className="text-right">
-                                <p className={`font-bold text-lg ${isRefund ? 'text-green-600' : 'text-blue-600'}`}>
-                                  {isRefund ? '-' : '+'}{formatPKR(Math.abs(payment.amount))}
-                                </p>
-                                {payment.remaining_due !== undefined && payment.remaining_due > 0 && (
-                                  <p className="text-xs text-muted-foreground">Remaining Due: {formatPKR(payment.remaining_due)}</p>
-                                )}
-                              </div>
+                              <p className="text-sm"><strong>Method:</strong> {payment.payment_method?.toUpperCase()}</p>
+                              {payment.notes && <p className="text-sm text-muted-foreground mt-1">📝 {payment.notes}</p>}
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-lg text-blue-600">+{formatPKR(Math.abs(payment.amount))}</p>
                             </div>
                           </div>
-                        );
-                      })}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
-            </TabsContent>
 
-            <TabsContent value="customer-pay" className="space-y-4">
               {customerDue > 0 ? (
-                <div className="space-y-4">
+                <div className="space-y-4 border-t pt-4">
                   <div className="bg-red-50 p-4 rounded-lg border border-red-200 text-center">
-                    <p className="text-sm text-red-700 font-medium">Outstanding Customer Due</p>
+                    <p className="text-sm text-red-700 font-medium">Outstanding Due</p>
                     <p className="text-4xl font-bold text-red-600 my-2">{formatPKR(customerDue)}</p>
-                    <p className="text-xs text-red-500">Customer needs to pay this amount</p>
                   </div>
 
                   <div>
-                    <Label className="text-sm font-medium">Payment Amount</Label>
+                    <label className="text-sm font-medium">Payment Amount</label>
                     <Input
                       type="number"
                       value={paymentAmount}
@@ -728,15 +728,17 @@ const getNetPosition = (sale: any) => {
                       placeholder="Enter amount to receive"
                       className="mt-1 text-lg"
                     />
-                    <p className="text-xs text-muted-foreground mt-1">Maximum: {formatPKR(customerDue)}</p>
+                    {paymentAmount > customerDue && (
+                      <p className="text-xs text-yellow-600 mt-1">
+                        ⚠️ Change to return: {formatPKR(paymentAmount - customerDue)}
+                      </p>
+                    )}
                   </div>
 
                   <div>
-                    <Label className="text-sm font-medium">Payment Method</Label>
+                    <label className="text-sm font-medium">Payment Method</label>
                     <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                      <SelectTrigger className="mt-1">
-                        <SelectValue />
-                      </SelectTrigger>
+                      <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="cash">💵 Cash</SelectItem>
                         <SelectItem value="card">💳 Card</SelectItem>
@@ -748,192 +750,69 @@ const getNetPosition = (sale: any) => {
                   </div>
 
                   <div>
-                    <Label className="text-sm font-medium">Notes (Optional)</Label>
-                    <Textarea
+                    <label className="text-sm font-medium">Notes (Optional)</label>
+                    <textarea
                       value={paymentNotes}
                       onChange={(e) => setPaymentNotes(e.target.value)}
                       placeholder="Add payment notes..."
-                      className="mt-1"
+                      className="mt-1 w-full p-2 text-sm border rounded-md"
                       rows={2}
                     />
                   </div>
 
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={handleRecordCustomerPayment}
-                      disabled={isSubmitting || paymentAmount <= 0}
-                      className="flex-1 bg-blue-600 hover:bg-blue-700 h-12 text-base"
-                    >
-                      {isSubmitting ? "Processing..." : `Receive ${formatPKR(paymentAmount || 0)}`}
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        setPaymentAmount(customerDue);
-                        setTimeout(() => handleRecordCustomerPayment(), 100);
-                      }}
-                      disabled={isSubmitting}
-                      variant="outline"
-                      className="flex-1 h-12"
-                    >
-                      Receive Full
-                    </Button>
-                  </div>
-
-                  <div className="bg-blue-50 p-2 rounded text-center text-sm">
-                    After payment: {customerDue - paymentAmount > 0 ?
-                      `Remaining due: ${formatPKR(customerDue - paymentAmount)}` :
-                      '✓ Account will be fully settled'}
-                  </div>
+                  <Button onClick={handleRecordPayment} disabled={isSubmitting || paymentAmount <= 0} className="w-full bg-blue-600 h-12">
+                    {isSubmitting ? "Processing..." : `Receive ${formatPKR(paymentAmount || 0)}`}
+                  </Button>
                 </div>
               ) : (
-                <div className="text-center py-12">
+                <div className="text-center py-8 border-t">
                   <CheckCircle className="h-16 w-16 mx-auto mb-3 text-green-500" />
-                  <p className="text-lg font-medium text-green-600">No Outstanding Due</p>
-                  <p className="text-sm text-muted-foreground mt-1">Customer has paid all amounts</p>
-                  {shopOwe > 0 && (
-                    <p className="text-sm text-orange-600 mt-4">Note: Shop owes customer {formatPKR(shopOwe)}. Go to "Pay Refund" tab.</p>
-                  )}
+                  <p className="text-lg font-medium text-green-600">Fully Paid</p>
+                  <p className="text-sm text-muted-foreground">No outstanding due</p>
                 </div>
               )}
-            </TabsContent>
+            </div>
 
-            <TabsContent value="shop-pay" className="space-y-4">
-              {shopOwe > 0 ? (
-                <div className="space-y-4">
-                  <div className="bg-green-50 p-4 rounded-lg border border-green-200 text-center">
-                    <p className="text-sm text-green-700 font-medium">Shop Owes Customer</p>
-                    <p className="text-4xl font-bold text-green-600 my-2">{formatPKR(shopOwe)}</p>
-                    <p className="text-xs text-green-500">Refund this amount to customer</p>
-                  </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={onClose}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-                  <div>
-                    <Label className="text-sm font-medium">Refund Amount</Label>
-                    <Input
-                      type="number"
-                      value={paymentAmount}
-                      onChange={(e) => {
-                        const val = parseFloat(e.target.value);
-                        setPaymentAmount(isNaN(val) ? 0 : Math.min(val, shopOwe));
-                      }}
-                      placeholder="Enter amount to refund"
-                      className="mt-1 text-lg"
-                    />
-                    <p className="text-xs text-muted-foreground mt-1">Maximum: {formatPKR(shopOwe)}</p>
-                  </div>
-
-                  <div>
-                    <Label className="text-sm font-medium">Refund Method</Label>
-                    <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                      <SelectTrigger className="mt-1">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="cash">💵 Cash</SelectItem>
-                        <SelectItem value="card">💳 Card Refund</SelectItem>
-                        <SelectItem value="easypaisa">📱 EasyPaisa</SelectItem>
-                        <SelectItem value="jazzcash">📱 JazzCash</SelectItem>
-                        <SelectItem value="bank">🏦 Bank Transfer</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <Label className="text-sm font-medium">Refund Reason (Optional)</Label>
-                    <Textarea
-                      value={paymentNotes}
-                      onChange={(e) => setPaymentNotes(e.target.value)}
-                      placeholder="Reason for refund..."
-                      className="mt-1"
-                      rows={2}
-                    />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={paymentAmount > 0 && paymentAmount < shopOwe ? handlePartialRefund : handleFullRefund}
-                      disabled={isSubmitting || (paymentAmount <= 0 && paymentAmount !== shopOwe)}
-                      className="flex-1 bg-green-600 hover:bg-green-700 h-12 text-base"
-                    >
-                      {isSubmitting ? "Processing..." :
-                        (paymentAmount > 0 && paymentAmount < shopOwe ?
-                          `Refund ${formatPKR(paymentAmount)}` :
-                          `Refund Full ${formatPKR(shopOwe)}`)}
-                    </Button>
-                  </div>
-
-                  <div className="bg-green-50 p-2 rounded text-center text-sm">
-                    After refund: {shopOwe - paymentAmount > 0 ?
-                      `Remaining shop owe: ${formatPKR(shopOwe - paymentAmount)}` :
-                      '✓ All amounts will be settled'}
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center py-12">
-                  <CheckCircle className="h-16 w-16 mx-auto mb-3 text-green-500" />
-                  <p className="text-lg font-medium text-green-600">No Refund Due</p>
-                  <p className="text-sm text-muted-foreground mt-1">Shop doesn't owe any amount to customer</p>
-                  {customerDue > 0 && (
-                    <p className="text-sm text-red-600 mt-4">Note: Customer owes {formatPKR(customerDue)}. Go to "Receive Payment" tab.</p>
-                  )}
-                </div>
-              )}
-            </TabsContent>
-          </Tabs>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={onClose}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    );
-  };
-
-  // Shop Owes List Modal
-  const ShopOwesListModal = ({ isOpen, onClose, sales }) => {
-    const shopOwesSales = sales.filter(sale => getNetPosition(sale) < 0);
-    const totalShopOwes = shopOwesSales.reduce((sum, sale) => sum + Math.abs(getNetPosition(sale)), 0);
-
-    return (
-      <Dialog open={isOpen} onOpenChange={onClose}>
-        <DialogContent className="sm:max-w-4xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>💰 Shop Owes Customers - Total: {formatPKR(totalShopOwes)}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            {shopOwesSales.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <CheckCircle className="h-12 w-12 mx-auto mb-2 text-green-500" />
-                <p>No pending refunds to customers</p>
+        <Dialog open={showOverpaymentModal} onOpenChange={setShowOverpaymentModal}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>💰 Overpayment - Give Change</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200 text-center">
+                <p className="text-sm text-yellow-800 mb-2">
+                  Customer paid <strong>{formatPKR(overpaymentInfo?.paymentAmount || 0)}</strong>
+                </p>
+                <p className="text-sm text-yellow-800">
+                  Due amount: <strong>{formatPKR(overpaymentInfo?.dueAmount || 0)}</strong>
+                </p>
+                <p className="text-lg font-bold text-yellow-800 mt-2">
+                  Change to return: {formatPKR(overpaymentInfo?.changeAmount || 0)}
+                </p>
               </div>
-            ) : (
-              shopOwesSales.map((sale) => {
-                const oweAmount = Math.abs(getNetPosition(sale));
-                return (
-                  <div key={sale.id} className="border rounded-lg p-4 bg-green-50">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="font-semibold">Receipt: {sale.receipt_number}</p>
-                        <p className="text-sm">Customer: {sale.customer_name || 'Walk-in Customer'}</p>
-                        <p className="text-sm">Phone: {sale.customer_phone || 'N/A'}</p>
-                        <p className="text-xs text-muted-foreground mt-1">Date: {format(new Date(sale.created_at), 'dd/MM/yyyy HH:mm')}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-lg font-bold text-green-600">Shop Owes: {formatPKR(oweAmount)}</p>
-                        <Button size="sm" className="mt-2 bg-green-600" onClick={() => { setSelectedSaleForPayment(sale); setIsPaymentModalOpen(true); onClose(); }}>
-                          Pay Now
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={onClose}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-center">What would you like to do?</p>
+                <Button className="w-full" onClick={handleOverpaymentGiveChange}>
+                  💵 Give Change ({formatPKR(overpaymentInfo?.changeAmount || 0)})
+                </Button>
+                <Button className="w-full" variant="outline" onClick={handleOverpaymentAdjust}>
+                  🔧 Adjust amount to {formatPKR(overpaymentInfo?.dueAmount || 0)}
+                </Button>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setShowOverpaymentModal(false)}>Cancel</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </>
     );
   };
 
@@ -956,134 +835,338 @@ const getNetPosition = (sale: any) => {
   const totalCount = filteredData.length;
   const startIndex = totalCount > 0 ? (currentPage - 1) * pageSize + 1 : 0;
   const endIndex = Math.min(currentPage * pageSize, totalCount);
-  const dueSalesCount = filteredData.filter(sale => getNetPosition(sale) > 0).length;
-  const shopOwesCount = filteredData.filter(sale => getNetPosition(sale) < 0).length;
-  const totalShopOwes = filteredData.reduce((sum, sale) => {
-    const netPos = getNetPosition(sale);
-    return netPos < 0 ? sum + Math.abs(netPos) : sum;
-  }, 0);
-  const totalCustomerOwes = filteredData.reduce((sum, sale) => {
-    const netPos = getNetPosition(sale);
-    return netPos > 0 ? sum + netPos : sum;
-  }, 0);
 
   // Columns
   const columns = [
     { key: 'receipt_number', label: 'Receipt No.', render: (value: string) => <span className="font-mono cursor-pointer hover:underline" onClick={() => { navigator.clipboard.writeText(value); toast({ title: "Copied!", duration: 1500 }); }}>{value}</span> },
-    { key: 'created_at', label: 'Date/Time', render: (value: string) => (<div><p className="text-sm">{format(new Date(value), 'dd/MM/yyyy')}</p><p className="text-xs text-muted-foreground">{format(new Date(value), 'HH:mm:ss')}</p></div>) },
-    { key: 'customer_name', label: 'Customer', render: (value: string) => <span>{value || 'Walk-in'}</span> },
-    { key: 'total', label: 'Amount', render: (value: string) => <span className="font-semibold">{formatPKR(value)}</span> },
-    { key: 'payment_method', label: 'Method', render: (value: string) => <Badge className={getPaymentMethodColor(value)}>{value?.toUpperCase() || '-'}</Badge> },
-  {
-  key: 'payment_status' as const,
-  label: 'Payment Status',
-  render: (value: string, row: any) => {
-    const netPosition = getNetPosition(row);
-    
-    // Debug log to verify
-    console.log(`Sale ${row.receipt_number}: Net Position = ${netPosition}`);
-    
-    // CASE 1: Customer owes shop (netPosition > 0)
-    if (netPosition > 0) {
-      return (
-        <div className="flex flex-col gap-1 min-w-[140px]">
-          <Badge className="bg-red-600 whitespace-nowrap">⚠️ Customer Owes</Badge>
-          <span className="text-xs font-bold text-red-600">Due: {formatPKR(netPosition)}</span>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-xs h-7 bg-blue-50 text-blue-700 border-blue-300"
-            onClick={(e) => {
-              e.stopPropagation();
-              setSelectedSaleForPayment(row);
-              setIsPaymentModalOpen(true);
-            }}
-          >
-            Receive Payment
-          </Button>
-        </div>
-      );
-    }
-    
-    // CASE 2: Shop owes customer (netPosition < 0)
-    if (netPosition < 0) {
-      const oweAmount = Math.abs(netPosition);
-      return (
-        <div className="flex flex-col gap-1 min-w-[140px]">
-          <Badge className="bg-green-600 whitespace-nowrap">💰 Shop Owes</Badge>
-          <span className="text-xs font-bold text-green-600">Owe: {formatPKR(oweAmount)}</span>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-xs h-7 bg-green-50 text-green-700 border-green-300"
-            onClick={(e) => {
-              e.stopPropagation();
-              setSelectedSaleForPayment(row);
-              setIsPaymentModalOpen(true);
-            }}
-          >
-            Pay Customer
-          </Button>
-        </div>
-      );
-    }
-    
-    // CASE 3: All settled
-    return <Badge className="bg-green-500 whitespace-nowrap">✓ Settled</Badge>;
-  },
-},
-    ...(loginType === "admin" ? [{
-      key: 'total_profit', label: 'Profit', render: (value: string) => <Badge variant="secondary">{formatPKR(value)}</Badge>
-    }] : []),
     {
-      key: 'actions', label: 'Actions', render: (_: any, row: any) => (<div className="flex gap-1"><Button size="sm" variant="ghost" onClick={() => handleViewDetails(row.id)}><Eye className="h-4 w-4" /></Button><Button size="sm" variant="ghost" onClick={() => handleReturnFromSale(row.receipt_number)} disabled={row.return_status === 'full'}><RotateCcw className="h-4 w-4" /></Button></div>)
+      key: 'created_at', label: 'Date/Time', render: (value: string) => {
+        const { date, time } = formatPakistanTime(value);
+        return (<div><p className="text-sm">{date}</p><p className="text-xs text-muted-foreground">{time}</p></div>);
+      }
+    },
+    { key: 'customer_name', label: 'Customer', render: (value: string) => <span>{value || 'Walk-in'}</span> },
+    {
+      key: 'total',
+      label: 'Amount',
+      render: (value: string, row: any) => {
+        const taxAmount = (parseFloat(row.subtotal) * parseFloat(row.tax || 0)) / 100;
+        return (
+          <div>
+            <span className="font-semibold">{formatPKR(value)}</span>
+            {taxAmount > 0 && (
+              <p className="text-xs text-muted-foreground">Tax: {formatPKR(taxAmount)}</p>
+            )}
+          </div>
+        );
+      }
+    },
+    { key: 'payment_method', label: 'Method', render: (value: string) => <Badge className={getPaymentMethodColor(value)}>{value?.toUpperCase() || '-'}</Badge> },
+    {
+      key: 'payment_status', label: 'Status', render: (value: string, row: any) => {
+        const due = getCustomerDue(row);
+        if (due > 0) {
+          return (
+            <div className="flex flex-col gap-1 min-w-[140px]">
+              <Badge className="bg-red-600">⚠️ Due</Badge>
+              <span className="text-xs font-bold text-red-600">Due: {formatPKR(due)}</span>
+              <Button size="sm" variant="outline" className="text-xs h-7 bg-blue-50" onClick={(e) => { e.stopPropagation(); setSelectedSaleForPayment(row); setIsPaymentModalOpen(true); }}>Receive Payment</Button>
+            </div>
+          );
+        }
+        if (value === 'completed') return <Badge className="bg-green-500">✓ Paid</Badge>;
+        if (value === 'pending') return <Badge className="bg-yellow-500">Pending</Badge>;
+        if (value === 'cancelled') return <Badge className="bg-red-500">❌ Cancelled</Badge>;
+        if (value === 'refunded') return <Badge className="bg-orange-500">↺ Refunded</Badge>;
+        return <Badge variant="outline">{value || '-'}</Badge>;
+      }
     },
     {
-      key: 'whatsapp', label: 'WhatsApp', render: (_: any, row: any) => (row.customer_phone ? <Button size="sm" variant="ghost" onClick={() => sendSaleWhatsApp(row)} className="text-green-600"><MessageCircle className="h-4 w-4" /></Button> : <span className="text-xs">No phone</span>)
+      key: 'return_status', label: 'Return', render: (value: string) => {
+        if (value === 'full') return <Badge className="bg-red-500">Fully Returned</Badge>;
+        if (value === 'partial') return <Badge className="bg-yellow-500">Partial Return</Badge>;
+        return <Badge variant="outline">No Return</Badge>;
+      }
+    },
+    ...(loginType === "admin" ? [{
+      key: 'total_profit', label: 'Profit', render: (value: string) => {
+        let profit = parseFloat(value) || 0;
+        return <Badge className="bg-purple-100 text-purple-800">{formatPKR(profit)}</Badge>;
+      }
+    }] : []),
+    {
+      key: 'actions', label: 'Actions', render: (_: any, row: any) => (
+        <div className="flex gap-1">
+          <Button size="sm" variant="ghost" onClick={() => handleViewDetails(row.id)}><Eye className="h-4 w-4" /></Button>
+          <Button size="sm" variant="ghost" onClick={() => handleReturnFromSale(row.receipt_number)} disabled={row.return_status === 'full'}><RotateCcw className="h-4 w-4" /></Button>
+        </div>
+      )
+    },
+    {
+      key: 'whatsapp', label: 'WhatsApp', render: (_: any, row: any) => (
+        row.customer_phone ?
+          <Button size="sm" variant="ghost" onClick={() => sendSaleWhatsApp(row)} className="text-green-600"><MessageCircle className="h-4 w-4" /></Button> :
+          <span className="text-xs text-muted-foreground">No phone</span>
+      )
     },
   ];
 
+  // Summary Cards Component - Collapsible
+  const SummaryCards = () => {
+    // Primary cards (always visible)
+    const primaryCards = [
+      {
+        title: "💰 Cash in Hand",
+        value: cashInHand,
+        color: "text-green-600",
+        bg: "from-green-50 to-emerald-50",
+        icon: <Banknote className="h-8 w-8 text-green-500" />,
+        subtitle: "From cash payments",
+        showFor: "all"
+      },
+      {
+        title: "📊 Total Sales",
+        value: totalSalesAmount,
+        color: "text-blue-600",
+        bg: "from-blue-50 to-cyan-50",
+        icon: <ShoppingBag className="h-8 w-8 text-blue-500" />,
+        subtitle: `${filteredData.length} transactions`,
+        showFor: "all"
+      },
+      {
+        title: "📈 Net Revenue",
+        value: netRevenue,
+        color: "text-teal-600",
+        bg: "from-teal-50 to-emerald-50",
+        icon: <TrendingUp className="h-8 w-8 text-teal-500" />,
+        subtitle: "After returns",
+        showFor: "all"
+      },
+      {
+        title: "💵 Total Profit",
+        value: totalProfit,
+        color: "text-purple-600",
+        bg: "from-purple-50 to-pink-50",
+        icon: <TrendingUp className="h-8 w-8 text-purple-500" />,
+        subtitle: `ROI: ${roi.toFixed(1)}%`,
+        tooltip: "Total profit from all sales. ROI = (Profit / Cost) × 100",
+        showFor: "admin"
+      }
+    ];
+
+    // Filter cards based on login type
+    const visiblePrimaryCards = primaryCards.filter(card =>
+      card.showFor === "all" || (card.showFor === "admin" && loginType === "admin")
+    );
+
+    // Secondary cards (hidden by default)
+    const secondaryCards = [
+      {
+        title: "⚠️ Total Due",
+        value: totalCustomerOwes,
+        color: "text-red-600",
+        bg: "from-red-50 to-orange-50",
+        icon: <AlertCircle className="h-8 w-8 text-red-500" />,
+        subtitle: `${dueSalesCount} transactions`
+      },
+      {
+        title: "✅ Completed",
+        value: completedSales.length,
+        color: "text-green-600",
+        bg: "from-green-50 to-emerald-50",
+        icon: <CheckCircle className="h-8 w-8 text-green-500" />,
+        subtitle: formatPKR(completedSales.reduce((sum, s) => sum + parseFloat(s.total), 0))
+      },
+      {
+        title: "Pending",
+        value: pendingSales.length,
+        color: "text-yellow-600",
+        bg: "from-yellow-50 to-amber-50",
+        icon: <Clock className="h-8 w-8 text-yellow-500" />,
+        subtitle: formatPKR(pendingSales.reduce((sum, s) => sum + parseFloat(s.total), 0))
+      },
+      {
+        title: "❌ Cancelled",
+        value: cancelledSales.length,
+        color: "text-red-600",
+        bg: "from-red-50 to-rose-50",
+        icon: <AlertCircle className="h-8 w-8 text-red-500" />,
+        subtitle: formatPKR(cancelledSales.reduce((sum, s) => sum + parseFloat(s.total), 0))
+      },
+      {
+        title: "↺ Refunded",
+        value: refundedSales.length,
+        color: "text-orange-600",
+        bg: "from-orange-50 to-amber-50",
+        icon: <RefreshCw className="h-8 w-8 text-orange-500" />,
+        subtitle: formatPKR(refundedSales.reduce((sum, s) => sum + parseFloat(s.total), 0))
+      },
+      {
+        title: "🔄 Fully Returned",
+        value: fullyReturned.length,
+        color: "text-red-600",
+        bg: "from-red-50 to-rose-50",
+        icon: <Package className="h-8 w-8 text-red-500" />,
+        subtitle: formatPKR(fullyReturned.reduce((sum, s) => sum + parseFloat(s.total_returned_amount || 0), 0))
+      },
+      {
+        title: "🟡 Partial Return",
+        value: partiallyReturned.length,
+        color: "text-yellow-600",
+        bg: "from-yellow-50 to-amber-50",
+        icon: <Package className="h-8 w-8 text-yellow-500" />
+      },
+      {
+        title: "🟢 No Return",
+        value: noReturn.length,
+        color: "text-green-600",
+        bg: "from-green-50 to-emerald-50",
+        icon: <Package className="h-8 w-8 text-green-500" />
+      }
+    ];
+
+    return (
+      <TooltipProvider>
+        <div className="space-y-4 mb-6">
+          {/* Primary Cards - Always Visible */}
+          <div className={`grid grid-cols-1 sm:grid-cols-2 ${visiblePrimaryCards.length === 3 ? 'lg:grid-cols-3' : 'lg:grid-cols-4'} gap-4`}>
+            {visiblePrimaryCards.map((card, idx) => (
+              <Card key={idx} className={`bg-gradient-to-r ${card.bg}`}>
+                <CardContent className="p-4">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="text-sm text-muted-foreground">{card.title}</p>
+                      <p className={`text-2xl font-bold ${card.color}`}>{formatPKR(card.value)}</p>
+                      <p className="text-xs text-muted-foreground mt-1">{card.subtitle}</p>
+                    </div>
+                    {card.icon}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {/* Show More/Less Button - Only show if there are secondary cards */}
+          {secondaryCards.length > 0 && (
+            <div className="flex justify-center">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAllCards(!showAllCards)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                {showAllCards ? (
+                  <>
+                    <ChevronLeft className="h-4 w-4 mr-1 rotate-90" />
+                    Show Less
+                  </>
+                ) : (
+                  <>
+                    <ChevronRight className="h-4 w-4 mr-1 -rotate-90" />
+                    Show More ({secondaryCards.length} more cards)
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
+
+          {/* Secondary Cards - Collapsible */}
+          {showAllCards && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-in slide-in-from-top-2 duration-200">
+              {secondaryCards.map((card, idx) => (
+                <Card key={idx} className={`bg-gradient-to-r ${card.bg}`}>
+                  <CardContent className="p-4">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="text-sm text-muted-foreground">{card.title}</p>
+                        <p className={`text-2xl font-bold ${card.color}`}>
+                          {typeof card.value === 'number' ? card.value.toLocaleString() : formatPKR(card.value)}
+                        </p>
+                        {card.subtitle && (
+                          <p className="text-xs text-muted-foreground mt-1">{card.subtitle}</p>
+                        )}
+                      </div>
+                      {card.icon}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      </TooltipProvider>
+    );
+  };
+
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden" key={renderKey}>
-      <main ref={mainContentRef} className="flex-1 overflow-auto p-6">
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <Card className="bg-gradient-to-r from-green-50 to-emerald-50">
-            <CardContent className="p-4"><div className="flex justify-between"><div><p className="text-sm text-muted-foreground">💰 Shop Owes</p><p className="text-2xl font-bold text-green-600">{formatPKR(totalShopOwes)}</p><p className="text-xs">{shopOwesCount} transactions</p></div><Wallet className="h-8 w-8 text-green-500" /></div></CardContent>
-          </Card>
-          <Card className="bg-gradient-to-r from-red-50 to-orange-50">
-            <CardContent className="p-4"><div className="flex justify-between"><div><p className="text-sm text-muted-foreground">⚠️ Customers Owe</p><p className="text-2xl font-bold text-red-600">{formatPKR(totalCustomerOwes)}</p><p className="text-xs">{dueSalesCount} transactions</p></div><AlertCircle className="h-8 w-8 text-red-500" /></div></CardContent>
-          </Card>
-          <Card><CardContent className="p-4"><div className="flex justify-between"><div><p className="text-sm text-muted-foreground">Total Sales</p><p className="text-2xl font-bold text-blue-600">{formatPKR(totalSalesAmount)}</p></div><ShoppingBag className="h-8 w-8 text-blue-500" /></div></CardContent></Card>
-          {loginType === "admin" && <Card><CardContent className="p-4"><div className="flex justify-between"><div><p className="text-sm text-muted-foreground">Total Profit</p><p className="text-2xl font-bold text-purple-600">{formatPKR(totalProfit)}</p><p className="text-xs">ROI: {roi.toFixed(1)}%</p></div><TrendingUp className="h-8 w-8 text-purple-500" /></div></CardContent></Card>}
-        </div>
+      <main ref={mainContentRef} className="flex-1 overflow-auto p-6" onScroll={handleScroll}>
+        <SummaryCards />
 
         <Card>
           <CardHeader>
             <div className="flex justify-between flex-wrap gap-4">
-              <div className="flex items-center gap-2"><CardTitle>Sales History</CardTitle><Button variant="ghost" size="icon" onClick={() => setShowShortcuts(true)}><Keyboard className="h-4 w-4" /></Button></div>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
+                <CardTitle>Sales History</CardTitle>
+                <Button variant="ghost" size="icon" onClick={() => setShowShortcuts(true)}><Keyboard className="h-4 w-4" /></Button>
+              </div>
+              <div className="flex gap-2 flex-wrap">
                 <Button onClick={handleResetFilters} variant="outline" size="sm">Reset All</Button>
                 <Button onClick={handleExport} variant="outline"><Download className="h-4 w-4 mr-2" />Export</Button>
                 <Button variant="outline" onClick={() => setShowDueList(true)}><AlertCircle className="h-4 w-4 mr-2" />Due List ({dueSalesCount})</Button>
-                <Button variant="outline" onClick={() => setShowShopOwesList(true)}><Wallet className="h-4 w-4 mr-2" />Shop Owes ({shopOwesCount})</Button>
+                <Button variant="outline" onClick={() => setShowWhatsAppModal(true)}><MessageCircle className="h-4 w-4 mr-2" />Share Report</Button>
               </div>
             </div>
           </CardHeader>
           <CardContent>
             {/* Filters */}
-            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
-              <Input placeholder="Search..." value={filters.search} onChange={(e) => handleFilterChange('search', e.target.value)} />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              <Input placeholder="Search by receipt, customer, phone..." value={filters.search} onChange={(e) => handleFilterChange('search', e.target.value)} />
+              <Input placeholder="Customer Name" value={filters.customerName} onChange={(e) => handleFilterChange('customerName', e.target.value)} />
               <Input type="date" placeholder="Start Date" value={filters.startDate} onChange={(e) => handleFilterChange('startDate', e.target.value)} />
               <Input type="date" placeholder="End Date" value={filters.endDate} onChange={(e) => handleFilterChange('endDate', e.target.value)} />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               <Select value={filters.paymentMethod || "all"} onValueChange={(v) => handleFilterChange('paymentMethod', v === "all" ? "" : v)}>
                 <SelectTrigger><SelectValue placeholder="Payment Method" /></SelectTrigger>
-                <SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="cash">Cash</SelectItem><SelectItem value="card">Card</SelectItem><SelectItem value="easypaisa">EasyPaisa</SelectItem><SelectItem value="jazzcash">JazzCash</SelectItem><SelectItem value="bank">Bank</SelectItem></SelectContent>
+                <SelectContent>
+                  <SelectItem value="all">All Methods</SelectItem>
+                  <SelectItem value="cash">💵 Cash</SelectItem>
+                  <SelectItem value="card">💳 Card</SelectItem>
+                  <SelectItem value="easypaisa">📱 EasyPaisa</SelectItem>
+                  <SelectItem value="jazzcash">📱 JazzCash</SelectItem>
+                  <SelectItem value="bank">🏦 Bank</SelectItem>
+                </SelectContent>
               </Select>
+
+              <Select value={filters.paymentStatus} onValueChange={(v) => handleFilterChange('paymentStatus', v)}>
+                <SelectTrigger><SelectValue placeholder="Payment Status" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="completed">✅ Completed</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="partial">⚠️ Partial</SelectItem>
+                  <SelectItem value="cancelled">❌ Cancelled</SelectItem>
+                  <SelectItem value="refunded">↺ Refunded</SelectItem>
+                </SelectContent>
+              </Select>
+
               <Select value={filters.returnStatus} onValueChange={(v) => handleFilterChange('returnStatus', v)}>
                 <SelectTrigger><SelectValue placeholder="Return Status" /></SelectTrigger>
-                <SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="none">No Return</SelectItem><SelectItem value="partial">Partial Return</SelectItem><SelectItem value="full">Full Return</SelectItem></SelectContent>
+                <SelectContent>
+                  <SelectItem value="all">All Returns</SelectItem>
+                  <SelectItem value="none">No Return</SelectItem>
+                  <SelectItem value="partial">Partial Return</SelectItem>
+                  <SelectItem value="full">Full Return</SelectItem>
+                </SelectContent>
               </Select>
+
+              <div className="flex gap-2">
+                <Input type="number" placeholder="Min Amount" value={filters.minAmount} onChange={(e) => handleFilterChange('minAmount', e.target.value)} className="w-1/2" />
+                <Input type="number" placeholder="Max Amount" value={filters.maxAmount} onChange={(e) => handleFilterChange('maxAmount', e.target.value)} className="w-1/2" />
+              </div>
             </div>
 
             <div className="mb-4 text-sm text-muted-foreground">
@@ -1095,25 +1178,59 @@ const getNetPosition = (sale: any) => {
             ) : (
               <>
                 <div className="border rounded-lg overflow-hidden overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-muted/50 border-b"><tr>{columns.map(col => <th key={col.key} className="text-left p-3 text-sm">{col.label}</th>)}</tr></thead>
+                  <table className="w-full min-w-[800px]">
+                    <thead className="bg-muted/50 border-b">
+                      <tr>
+                        {columns.map(col => (
+                          <th key={col.key} className="text-left p-3 text-sm font-medium">{col.label}</th>
+                        ))}
+                      </tr>
+                    </thead>
                     <tbody>
-                      {paginatedData.map((sale, idx) => (
-                        <tr key={sale.id} className={`border-b hover:bg-muted/30 ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/10'}`}>
-                          {columns.map(col => <td key={col.key} className="p-3">{col.render(sale[col.key], sale)}</td>)}
+                      {paginatedData.length > 0 ? (
+                        paginatedData.map((sale, idx) => (
+                          <tr key={sale.id} className={`border-b hover:bg-muted/30 transition-colors ${idx % 2 === 0 ? 'bg-background' : 'bg-muted/10'}`}>
+                            {columns.map(col => (
+                              <td key={col.key} className="p-3 align-top">{col.render(sale[col.key], sale)}</td>
+                            ))}
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={columns.length} className="text-center p-8 text-muted-foreground">
+                            No sales found. Try adjusting your filters.
+                          </td>
                         </tr>
-                      ))}
-                      {paginatedData.length === 0 && <tr><td colSpan={columns.length} className="text-center p-8">No sales found.</td></tr>}
+                      )}
                     </tbody>
                   </table>
                 </div>
 
+                {/* Custom Pagination */}
                 {totalPages > 1 && (
-                  <div className="flex justify-between items-center mt-4 pt-4 border-t">
-                    <div className="text-sm">Page {currentPage} of {totalPages}</div>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}><ChevronLeft className="h-4 w-4 mr-1" />Previous</Button>
-                      <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>Next<ChevronRight className="h-4 w-4 ml-1" /></Button>
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t flex-wrap gap-4">
+                    <div className="text-sm text-muted-foreground">Page {currentPage} of {totalPages}</div>
+                    <div className="flex space-x-2">
+                      <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
+                        <ChevronLeft className="h-4 w-4 mr-1" />Previous
+                      </Button>
+                      <div className="flex space-x-1">
+                        {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                          let pageNum;
+                          if (totalPages <= 5) pageNum = i + 1;
+                          else if (currentPage <= 3) pageNum = i + 1;
+                          else if (currentPage >= totalPages - 2) pageNum = totalPages - 4 + i;
+                          else pageNum = currentPage - 2 + i;
+                          return (
+                            <Button key={pageNum} variant={currentPage === pageNum ? "default" : "outline"} size="sm" onClick={() => setCurrentPage(pageNum)} className="w-10">
+                              {pageNum}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                      <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>
+                        Next<ChevronRight className="h-4 w-4 ml-1" />
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -1125,7 +1242,58 @@ const getNetPosition = (sale: any) => {
 
       <KeyboardShortcutsModal open={showShortcuts} onOpenChange={setShowShortcuts} title="Sales Page Shortcuts" shortcuts={shortcuts} />
       <DueListModal isOpen={showDueList} onClose={() => setShowDueList(false)} />
-      <ShopOwesListModal isOpen={showShopOwesList} onClose={() => setShowShopOwesList(false)} sales={filteredData} />
+
+      {/* WhatsApp Modal */}
+      <Dialog open={showWhatsAppModal} onOpenChange={setShowWhatsAppModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Share Sales Report</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-medium mb-1">WhatsApp Number</p>
+              <Input placeholder="923295121520" value={whatsappNumber} onChange={(e) => setWhatsappNumber(e.target.value)} />
+              {shopPhoneNo && (
+                <p className="text-xs text-green-600 mt-1">
+                  ✓ Shop phone number loaded: {shopPhoneNo}
+                  <button onClick={() => setWhatsappNumber(shopPhoneNo)} className="ml-2 text-blue-500 hover:underline text-xs">Use shop number</button>
+                </p>
+              )}
+            </div>
+            <div className="bg-muted p-3 rounded-lg">
+              <p className="text-sm font-medium">Report Summary:</p>
+              <p className="text-xs text-muted-foreground mt-1">Total Sales: {formatPKR(totalSalesAmount)}</p>
+              <p className="text-xs text-muted-foreground">Net Revenue: {formatPKR(netRevenue)}</p>
+              <p className="text-xs text-muted-foreground">Total Due: {formatPKR(totalCustomerOwes)}</p>
+              <p className="text-xs text-muted-foreground">Cash in Hand: {formatPKR(cashInHand)}</p>
+              <p className="text-xs text-muted-foreground">Transactions: {totalCount}</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowWhatsAppModal(false)}>Cancel</Button>
+            <Button onClick={() => {
+              const dateRange = filters.startDate && filters.endDate
+                ? `${filters.startDate} to ${filters.endDate}`
+                : 'All Time';
+              const message = `📊 *SALES REPORT* 📊%0A%0A` +
+                `📅 Period: ${dateRange}%0A` +
+                `💰 Total Sales: ${formatPKR(totalSalesAmount)}%0A` +
+                `📈 Net Revenue: ${formatPKR(netRevenue)}%0A` +
+                `⚠️ Total Due: ${formatPKR(totalCustomerOwes)}%0A` +
+                `💵 Cash in Hand: ${formatPKR(cashInHand)}%0A` +
+                `📝 Transactions: ${totalCount}%0A%0A` +
+                `🏪 Generated: ${new Date().toLocaleString()}`;
+              const whatsappUrl = `https://wa.me/${whatsappNumber.replace(/\D/g, '').replace(/^0/, '')}?text=${message}`;
+              window.open(whatsappUrl, '_blank');
+              setShowWhatsAppModal(false);
+            }}>
+              <MessageCircle className="h-4 w-4 mr-2" />
+              Send via WhatsApp
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {selectedSaleForPayment && (
         <PaymentHistoryModal sale={selectedSaleForPayment} isOpen={isPaymentModalOpen} onClose={() => { setIsPaymentModalOpen(false); setSelectedSaleForPayment(null); }} onPaymentRecorded={() => { refetch(); setIsPaymentModalOpen(false); setSelectedSaleForPayment(null); }} />
       )}

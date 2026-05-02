@@ -323,7 +323,7 @@ export default function Employees() {
     const { navigateTo } = useNavigation();
 
     const handleViewDetails = (employeeId: string) => {
-        console.log(employeeId,'baka9s9s')
+        console.log(employeeId, 'baka9s9s')
         navigateTo(`/employees/${employeeId}`);
         // window.history.pushState({}, '', `/employees/${employeeId}`);
     };
@@ -373,16 +373,24 @@ export default function Employees() {
                 </Badge>
             ),
         },
-        {
-            key: 'salary' as const,
-            label: 'Salary',
-            render: (value: number, row: any) => (
-                <div>
-                    <p className="font-semibold">{formatPKR(value || 0)}</p>
-                    <p className="text-xs text-muted-foreground capitalize">{row.salary_type || '-'}</p>
-                </div>
-            ),
-        },
+       {
+    key: 'salary' as const,
+    label: 'Salary/Rate',
+    render: (value: number, row: any) => (
+        <div>
+            <p className="font-semibold">
+                {row.payment_type === 'daily' ? formatPKR(row.daily_rate || 0) + '/day' :
+                 row.payment_type === 'weekly' ? formatPKR(row.weekly_rate || 0) + '/week' :
+                 row.payment_type === 'hourly' ? formatPKR(row.hourly_rate || 0) + '/hour' :
+                 row.payment_type === 'contract' ? formatPKR(row.contract_amount || 0) :
+                 formatPKR(value || 0)}
+            </p>
+            <p className="text-xs text-muted-foreground capitalize">
+                {row.payment_type || row.salary_type || 'fixed'}
+            </p>
+        </div>
+    ),
+},
         {
             key: 'join_date' as const,
             label: 'Join Date',
@@ -764,13 +772,19 @@ export default function Employees() {
     );
 }
 
-// Employee Form Modal Component
+// EmployeeFormModal.tsx - Updated version
 function EmployeeFormModal({ isOpen, onClose, employee, onRefresh }: { isOpen: boolean; onClose: () => void; employee: any; onRefresh: () => void }) {
     const [formData, setFormData] = useState({
         name: "",
         phone: "",
+        payment_type: "fixed", // fixed, daily, weekly, contract, hourly
         salary: "",
-        salary_type: "monthly",
+        daily_rate: "",
+        weekly_rate: "",
+        hourly_rate: "",
+        contract_amount: "",
+        contract_start_date: "",
+        contract_end_date: "",
         payment_method: "cash",
         shift: "day",
         employee_type: "labor",
@@ -791,8 +805,14 @@ function EmployeeFormModal({ isOpen, onClose, employee, onRefresh }: { isOpen: b
             setFormData({
                 name: employee.name || "",
                 phone: employee.phone || "",
+                payment_type: employee.payment_type || "fixed",
                 salary: employee.salary?.toString() || "",
-                salary_type: employee.salary_type || "monthly",
+                daily_rate: employee.daily_rate?.toString() || "",
+                weekly_rate: employee.weekly_rate?.toString() || "",
+                hourly_rate: employee.hourly_rate?.toString() || "",
+                contract_amount: employee.contract_amount?.toString() || "",
+                contract_start_date: employee.contract_start_date?.split('T')[0] || "",
+                contract_end_date: employee.contract_end_date?.split('T')[0] || "",
                 payment_method: employee.payment_method || "cash",
                 shift: employee.shift || "day",
                 employee_type: employee.employee_type || "labor",
@@ -803,8 +823,14 @@ function EmployeeFormModal({ isOpen, onClose, employee, onRefresh }: { isOpen: b
             setFormData({
                 name: "",
                 phone: "",
+                payment_type: "fixed",
                 salary: "",
-                salary_type: "monthly",
+                daily_rate: "",
+                weekly_rate: "",
+                hourly_rate: "",
+                contract_amount: "",
+                contract_start_date: "",
+                contract_end_date: "",
                 payment_method: "cash",
                 shift: "day",
                 employee_type: "labor",
@@ -819,8 +845,14 @@ function EmployeeFormModal({ isOpen, onClose, employee, onRefresh }: { isOpen: b
             const employeeData = {
                 name: data.name,
                 phone: data.phone,
-                salary: parseFloat(data.salary),
-                salary_type: data.salary_type,
+                payment_type: data.payment_type,
+                salary: data.payment_type === 'fixed' ? parseFloat(data.salary) : 0,
+                daily_rate: data.payment_type === 'daily' ? parseFloat(data.daily_rate) : 0,
+                weekly_rate: data.payment_type === 'weekly' ? parseFloat(data.weekly_rate) : 0,
+                hourly_rate: data.payment_type === 'hourly' ? parseFloat(data.hourly_rate) : 0,
+                contract_amount: data.payment_type === 'contract' ? parseFloat(data.contract_amount) : 0,
+                contract_start_date: data.payment_type === 'contract' ? data.contract_start_date : null,
+                contract_end_date: data.payment_type === 'contract' ? data.contract_end_date : null,
                 payment_method: data.payment_method,
                 shift: data.shift,
                 employee_type: data.employee_type,
@@ -856,16 +888,36 @@ function EmployeeFormModal({ isOpen, onClose, employee, onRefresh }: { isOpen: b
         saveEmployeeMutation.mutate(formData);
     };
 
+    // Get salary info based on payment type
+    const getSalaryInfo = () => {
+        switch (formData.payment_type) {
+            case 'fixed':
+                return { label: 'Monthly Salary', value: formData.salary, placeholder: 'Enter monthly salary' };
+            case 'daily':
+                return { label: 'Daily Rate', value: formData.daily_rate, placeholder: 'Enter daily wage (e.g., 800/day)' };
+            case 'weekly':
+                return { label: 'Weekly Rate', value: formData.weekly_rate, placeholder: 'Enter weekly wage (e.g., 5000/week)' };
+            case 'hourly':
+                return { label: 'Hourly Rate', value: formData.hourly_rate, placeholder: 'Enter hourly rate (e.g., 200/hour)' };
+            case 'contract':
+                return { label: 'Contract Amount', value: formData.contract_amount, placeholder: 'Enter total contract amount' };
+            default:
+                return { label: 'Salary', value: formData.salary, placeholder: 'Enter salary amount' };
+        }
+    };
+
+    const salaryInfo = getSalaryInfo();
+
     return (
         <Dialog open={isOpen} onOpenChange={onClose}>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>{employee ? 'Edit Employee' : 'Add New Employee'}</DialogTitle>
                 </DialogHeader>
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="text-sm font-medium">Full Name</label>
+                            <label className="text-sm font-medium">Full Name *</label>
                             <Input
                                 value={formData.name}
                                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
@@ -873,7 +925,7 @@ function EmployeeFormModal({ isOpen, onClose, employee, onRefresh }: { isOpen: b
                             />
                         </div>
                         <div>
-                            <label className="text-sm font-medium">Phone Number</label>
+                            <label className="text-sm font-medium">Phone Number *</label>
                             <Input
                                 value={formData.phone}
                                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
@@ -884,27 +936,59 @@ function EmployeeFormModal({ isOpen, onClose, employee, onRefresh }: { isOpen: b
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="text-sm font-medium">Salary</label>
-                            <Input
-                                type="number"
-                                value={formData.salary}
-                                onChange={(e) => setFormData({ ...formData, salary: e.target.value })}
-                                required
-                            />
-                        </div>
-                        <div>
-                            <label className="text-sm font-medium">Salary Type</label>
-                            <Select value={formData.salary_type} onValueChange={(value) => setFormData({ ...formData, salary_type: value })}>
+                            <label className="text-sm font-medium">Payment Type</label>
+                            <Select value={formData.payment_type} onValueChange={(value) => setFormData({ ...formData, payment_type: value })}>
                                 <SelectTrigger>
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="monthly">Monthly</SelectItem>
-                                    <SelectItem value="weekly">Weekly</SelectItem>
+                                    <SelectItem value="fixed">📅 Monthly Fixed Salary</SelectItem>
+                                    <SelectItem value="daily">📆 Daily Wages</SelectItem>
+                                    <SelectItem value="weekly">📆 Weekly Wages</SelectItem>
+                                    <SelectItem value="hourly">⏰ Hourly Rate</SelectItem>
+                                    <SelectItem value="contract">📄 Contract Based</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
+                        <div>
+                            <label className="text-sm font-medium">{salaryInfo.label}</label>
+                            <Input
+                                type="number"
+                                value={salaryInfo.value}
+                                onChange={(e) => {
+                                    const key = formData.payment_type === 'fixed' ? 'salary' :
+                                        formData.payment_type === 'daily' ? 'daily_rate' :
+                                            formData.payment_type === 'weekly' ? 'weekly_rate' :
+                                                formData.payment_type === 'hourly' ? 'hourly_rate' : 'contract_amount';
+                                    setFormData({ ...formData, [key]: e.target.value });
+                                }}
+                                placeholder={salaryInfo.placeholder}
+                                required={formData.payment_type !== 'contract' || (formData.payment_type === 'contract' && !formData.contract_amount)}
+                            />
+                        </div>
                     </div>
+
+                    {/* Contract Dates (only show for contract type) */}
+                    {formData.payment_type === 'contract' && (
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-sm font-medium">Contract Start Date</label>
+                                <Input
+                                    type="date"
+                                    value={formData.contract_start_date}
+                                    onChange={(e) => setFormData({ ...formData, contract_start_date: e.target.value })}
+                                />
+                            </div>
+                            <div>
+                                <label className="text-sm font-medium">Contract End Date</label>
+                                <Input
+                                    type="date"
+                                    value={formData.contract_end_date}
+                                    onChange={(e) => setFormData({ ...formData, contract_end_date: e.target.value })}
+                                />
+                            </div>
+                        </div>
+                    )}
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
@@ -914,12 +998,12 @@ function EmployeeFormModal({ isOpen, onClose, employee, onRefresh }: { isOpen: b
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="cash">Cash</SelectItem>
-                                    <SelectItem value="card">Card</SelectItem>
-                                    <SelectItem value="easypaisa">EasyPaisa</SelectItem>
-                                    <SelectItem value="jazzcash">JazzCash</SelectItem>
-                                    <SelectItem value="bank">Bank</SelectItem>
-                                    <SelectItem value="check">Check</SelectItem>
+                                    <SelectItem value="cash">💵 Cash</SelectItem>
+                                    <SelectItem value="card">💳 Card</SelectItem>
+                                    <SelectItem value="easypaisa">📱 EasyPaisa</SelectItem>
+                                    <SelectItem value="jazzcash">📱 JazzCash</SelectItem>
+                                    <SelectItem value="bank">🏦 Bank</SelectItem>
+                                    <SelectItem value="check">📝 Check</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
@@ -930,8 +1014,8 @@ function EmployeeFormModal({ isOpen, onClose, employee, onRefresh }: { isOpen: b
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="day">Day Shift</SelectItem>
-                                    <SelectItem value="night">Night Shift</SelectItem>
+                                    <SelectItem value="day">🌞 Day Shift</SelectItem>
+                                    <SelectItem value="night">🌙 Night Shift</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
@@ -945,11 +1029,11 @@ function EmployeeFormModal({ isOpen, onClose, employee, onRefresh }: { isOpen: b
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="manager">Manager</SelectItem>
-                                    <SelectItem value="cashier">Cashier</SelectItem>
-                                    <SelectItem value="labor">Labor</SelectItem>
-                                    <SelectItem value="salesman">Sales Man</SelectItem>
-                                    <SelectItem value="other">Other</SelectItem>
+                                    <SelectItem value="manager">👔 Manager</SelectItem>
+                                    <SelectItem value="cashier">💰 Cashier</SelectItem>
+                                    <SelectItem value="labor">🔧 Labor</SelectItem>
+                                    <SelectItem value="salesman">📦 Sales Man</SelectItem>
+                                    <SelectItem value="other">📋 Other</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
