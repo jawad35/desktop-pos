@@ -1831,6 +1831,28 @@ export function setupIpcHandlers() {
             const db = getDb();
             const id = crypto.randomUUID();
 
+            // Determine salary_type based on payment_type
+            let salary_type = 'monthly';
+            switch (employeeData.payment_type) {
+                case 'fixed':
+                    salary_type = 'monthly';
+                    break;
+                case 'daily':
+                    salary_type = 'daily';
+                    break;
+                case 'weekly':
+                    salary_type = 'weekly';
+                    break;
+                case 'hourly':
+                    salary_type = 'hourly';
+                    break;
+                case 'contract':
+                    salary_type = 'contract';
+                    break;
+                default:
+                    salary_type = 'monthly';
+            }
+
             // Determine which rate to use as salary based on payment_type
             let salary = employeeData.salary || 0;
             if (employeeData.payment_type === 'daily') {
@@ -1857,7 +1879,7 @@ export function setupIpcHandlers() {
                 employeeData.name,
                 employeeData.phone,
                 salary,
-                employeeData.salary_type || 'monthly',
+                salary_type,  // Use the determined salary_type instead of employeeData.salary_type
                 employeeData.payment_method || 'cash',
                 employeeData.shift || 'day',
                 employeeData.employee_type || 'labor',
@@ -1889,11 +1911,38 @@ export function setupIpcHandlers() {
             const updates = [];
             const params = [];
 
+            // If payment_type is being updated, automatically update salary_type
+            if (employeeData.payment_type !== undefined) {
+                let newSalaryType = 'monthly';
+                switch (employeeData.payment_type) {
+                    case 'fixed':
+                        newSalaryType = 'monthly';
+                        break;
+                    case 'daily':
+                        newSalaryType = 'daily';
+                        break;
+                    case 'weekly':
+                        newSalaryType = 'weekly';
+                        break;
+                    case 'hourly':
+                        newSalaryType = 'hourly';
+                        break;
+                    case 'contract':
+                        newSalaryType = 'contract';
+                        break;
+                }
+                updates.push('salary_type = ?');
+                params.push(newSalaryType);
+            }
+
             // Map frontend field names to database column names
             if (employeeData.name !== undefined) { updates.push('name = ?'); params.push(employeeData.name); }
             if (employeeData.phone !== undefined) { updates.push('phone = ?'); params.push(employeeData.phone); }
             if (employeeData.salary !== undefined) { updates.push('salary = ?'); params.push(employeeData.salary); }
-            if (employeeData.salary_type !== undefined) { updates.push('salary_type = ?'); params.push(employeeData.salary_type); }
+            if (employeeData.salary_type !== undefined && employeeData.payment_type === undefined) {
+                updates.push('salary_type = ?');
+                params.push(employeeData.salary_type);
+            }
             if (employeeData.payment_method !== undefined) { updates.push('payment_method = ?'); params.push(employeeData.payment_method); }
             if (employeeData.shift !== undefined) { updates.push('shift = ?'); params.push(employeeData.shift); }
             if (employeeData.employee_type !== undefined) { updates.push('employee_type = ?'); params.push(employeeData.employee_type); }
@@ -2480,7 +2529,7 @@ export function setupIpcHandlers() {
                 return new Date(year, month + 1, 0).getDate();
             };
 
-            // Get sales with profit (these are already correct - count full amount when sold)
+            // ========== 1. SALES ==========
             const sales = db.prepare(`
             SELECT 
                 si.id,
@@ -2494,10 +2543,10 @@ export function setupIpcHandlers() {
             JOIN products p ON si.product_id = p.id
             JOIN sales s ON si.sale_id = s.id
             WHERE date(s.created_at) BETWEEN date(?) AND date(?)
+            AND s.payment_status != 'cancelled'
             ORDER BY s.created_at DESC
         `).all(startDate, endDate);
 
-            // Calculate sales totals
             let totalSales = 0;
             let totalCOGS = 0;
             let grossProfit = 0;
@@ -2509,8 +2558,7 @@ export function setupIpcHandlers() {
                 totalCOGS += sale.total - profit;
             }
 
-            // Get SALARIES - SPREAD ACROSS DAYS (don't count full amount on payment day)
-            // First get all paid salaries that fall within the period or before
+            // ========== 2. MONTHLY SALARIES (Spread across days) ==========
             const salaries = db.prepare(`
             SELECT 
                 sa.id,
@@ -2529,9 +2577,9 @@ export function setupIpcHandlers() {
             WHERE sa.status = 'paid'
         `).all();
 
-            let totalSalaries = 0;
+            let totalMonthlySalaries = 0;
+            const salaryDetails = [];
 
-            // For each salary, calculate daily rate and add only the days within the period
             for (const salary of salaries) {
                 const salaryDate = salary.payment_date || salary.created_at;
                 if (!salaryDate) continue;
@@ -2541,23 +2589,111 @@ export function setupIpcHandlers() {
                 const daysInMonth = getDaysInMonth(salaryYear, salaryMonth);
                 const dailyRate = salary.net_salary / daysInMonth;
 
-                // Calculate how many days of this salary fall within the selected period
                 const salaryStart = new Date(salaryYear, salaryMonth, 1);
                 const salaryEnd = new Date(salaryYear, salaryMonth, daysInMonth);
+                const periodStartDate = new Date(startDate);
+                const periodEndDate = new Date(endDate);
 
-                const periodStart = new Date(startDate);
-                const periodEnd = new Date(endDate);
-
-                const overlapStart = new Date(Math.max(salaryStart.getTime(), periodStart.getTime()));
-                const overlapEnd = new Date(Math.min(salaryEnd.getTime(), periodEnd.getTime()));
+                const overlapStart = new Date(Math.max(salaryStart.getTime(), periodStartDate.getTime()));
+                const overlapEnd = new Date(Math.min(salaryEnd.getTime(), periodEndDate.getTime()));
 
                 if (overlapStart <= overlapEnd) {
                     const daysInPeriod = Math.ceil((overlapEnd.getTime() - overlapStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-                    totalSalaries += dailyRate * daysInPeriod;
+                    const periodAmount = dailyRate * daysInPeriod;
+                    totalMonthlySalaries += periodAmount;
+
+                    salaryDetails.push({
+                        id: salary.id,
+                        employee_name: salary.employee_name,
+                        amount: periodAmount,
+                        payment_type: 'salary',
+                        period_start: salaryStart.toISOString().split('T')[0],
+                        period_end: salaryEnd.toISOString().split('T')[0],
+                        payment_date: salaryDate,
+                        description: `Monthly salary for ${salary.month}/${salary.year} (${daysInPeriod} days in period)`,
+                        month: salary.month,
+                        year: salary.year,
+                        payment_method: 'bank'
+                    });
                 }
             }
 
-            // Get EXPENSES - handle recurring expenses properly
+            // ========== 3. EMPLOYEE PAYMENTS (Wages, Extra Work, etc.) ==========
+            const employeePayments = db.prepare(`
+            SELECT 
+                ep.*,
+                e.name as employee_name,
+                e.payment_type as emp_payment_type,
+                e.daily_rate,
+                e.weekly_rate,
+                e.hourly_rate,
+                e.salary as monthly_salary
+            FROM employee_payments ep
+            JOIN employees e ON ep.employee_id = e.id
+            WHERE ep.status = 'completed'
+            AND date(ep.payment_date) BETWEEN date(?) AND date(?)
+            ORDER BY ep.payment_date DESC
+        `).all(startDate, endDate);
+
+            // Initialize wage breakdown
+            const wageBreakdown = {
+                monthly: totalMonthlySalaries,
+                daily: 0,
+                weekly: 0,
+                hourly: 0,
+                contract: 0,
+                extraWork: 0
+            };
+
+            const allWages = [...salaryDetails];
+
+            // Process each employee payment
+            for (const payment of employeePayments) {
+                let amountToAdd = payment.amount;
+
+                switch (payment.payment_type) {
+                    case 'daily':
+                        wageBreakdown.daily += amountToAdd;
+                        break;
+                    case 'weekly':
+                        wageBreakdown.weekly += amountToAdd;
+                        break;
+                    case 'hourly':
+                        wageBreakdown.hourly += amountToAdd;
+                        break;
+                    case 'contract':
+                        wageBreakdown.contract += amountToAdd;
+                        break;
+                    case 'extra_work':
+                        wageBreakdown.extraWork += amountToAdd;
+                        break;
+                    default:
+                        // If unknown type, treat as other
+                        break;
+                }
+
+                allWages.push({
+                    id: payment.id,
+                    employee_name: payment.employee_name,
+                    amount: payment.amount,
+                    payment_type: payment.payment_type,
+                    period_start: payment.period_start,
+                    period_end: payment.period_end,
+                    payment_date: payment.payment_date,
+                    payment_method: payment.payment_method,
+                    description: payment.description,
+                    hours: extractHoursFromDescription(payment.description),
+                    hourly_rate: payment.hourly_rate
+                });
+            }
+
+            // Calculate total wages from ALL non-salary payments
+            const totalWages = wageBreakdown.daily + wageBreakdown.weekly + wageBreakdown.hourly +
+                wageBreakdown.contract + wageBreakdown.extraWork;
+
+            const totalEmployeeCost = totalMonthlySalaries + totalWages;
+
+            // ========== 4. EXPENSES ==========
             const expenses = db.prepare(`
             SELECT * FROM expenses 
             WHERE date(created_at) BETWEEN date(?) AND date(?)
@@ -2567,13 +2703,11 @@ export function setupIpcHandlers() {
 
             let totalExpenses = 0;
 
-            // Get all recurring expenses (including those not in the date range)
             const allRecurringExpenses = db.prepare(`
             SELECT * FROM expenses 
             WHERE is_recurring = 1
         `).all();
 
-            // Add recurring expenses that apply to this period
             for (const expense of allRecurringExpenses) {
                 let dailyAmount = 0;
                 const expenseAmount = expense.amount || 0;
@@ -2598,26 +2732,26 @@ export function setupIpcHandlers() {
                 totalExpenses += dailyAmount * daysDiff;
             }
 
-            // Add one-time expenses that fall within the date range
             for (const expense of expenses) {
                 if (!expense.is_recurring || expense.frequency === 'one-time') {
                     totalExpenses += expense.amount || 0;
                 }
             }
 
-            const netProfit = grossProfit - totalSalaries - totalExpenses;
+            const netProfit = grossProfit - totalEmployeeCost - totalExpenses;
+            const dailyAverageWage = totalEmployeeCost / daysDiff;
 
-            // Format salaries for display (show full amount but note it's spread)
-            const formattedSalaries = salaries.map(s => ({
+            // Format sales for display
+            const formattedSales = sales.map(s => ({
                 id: s.id,
-                employee_name: s.employee_name,
-                net_salary: s.net_salary,
-                payment_date: s.payment_date || s.created_at,
-                status: s.status,
-                note: `Daily rate: ${(s.net_salary / getDaysInMonth(new Date(s.payment_date || s.created_at).getFullYear(), new Date(s.payment_date || s.created_at).getMonth())).toFixed(2)}/day`
+                product_name: s.product_name,
+                quantity: s.quantity,
+                unit_price: s.unit_price,
+                total: s.total,
+                profit: s.profit,
+                sale_date: s.sale_date
             }));
 
-            // Format expenses for display
             const formattedExpenses = expenses.map(e => ({
                 id: e.id,
                 title: e.title,
@@ -2635,24 +2769,41 @@ export function setupIpcHandlers() {
             }));
 
             return {
-                period: { startDate, endDate, days: daysDiff },
+                period: {
+                    startDate,
+                    endDate,
+                    days: daysDiff
+                },
                 summary: {
                     totalSales,
                     totalCOGS,
                     grossProfit,
-                    totalSalaries,
+                    totalSalaries: totalMonthlySalaries,
+                    totalWages: totalWages,  // THIS IS THE KEY FIX - was missing
+                    totalEmployeeCost: totalEmployeeCost,
                     totalExpenses,
-                    netProfit
+                    netProfit,
+                    dailyAverageWage
                 },
-                sales,
-                salaries: formattedSalaries,
+                wageBreakdown,
+                sales: formattedSales,
+                allWages: allWages,
                 expenses: formattedExpenses
             };
+
         } catch (error) {
             console.error('Error in getProfitData:', error);
             throw error;
         }
     });
+
+    // Helper function to extract hours from description
+    function extractHoursFromDescription(description) {
+        if (!description) return 0;
+        const match = description.match(/\(([\d.]+)\s*hours?\)/i);
+        return match ? parseFloat(match[1]) : 0;
+    }
+
 
     // Update admin PIN - sync with server and local
     ipcMain.handle('app:updateAdminPin', async (event, oldPin, newPin) => {

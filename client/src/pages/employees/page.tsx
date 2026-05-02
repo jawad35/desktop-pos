@@ -373,24 +373,44 @@ export default function Employees() {
                 </Badge>
             ),
         },
-       {
-    key: 'salary' as const,
-    label: 'Salary/Rate',
-    render: (value: number, row: any) => (
-        <div>
-            <p className="font-semibold">
-                {row.payment_type === 'daily' ? formatPKR(row.daily_rate || 0) + '/day' :
-                 row.payment_type === 'weekly' ? formatPKR(row.weekly_rate || 0) + '/week' :
-                 row.payment_type === 'hourly' ? formatPKR(row.hourly_rate || 0) + '/hour' :
-                 row.payment_type === 'contract' ? formatPKR(row.contract_amount || 0) :
-                 formatPKR(value || 0)}
-            </p>
-            <p className="text-xs text-muted-foreground capitalize">
-                {row.payment_type || row.salary_type || 'fixed'}
-            </p>
-        </div>
-    ),
-},
+        {
+            key: 'salary' as const,
+            label: 'Salary/Rate',
+            render: (value: number, row: any) => {
+                // Get the correct rate based on payment_type
+                let rate = 0;
+                let unit = '';
+
+                if (row.payment_type === 'hourly') {
+                    rate = row.hourly_rate || 0;
+                    unit = '/hour';
+                } else if (row.payment_type === 'daily') {
+                    rate = row.daily_rate || 0;
+                    unit = '/day';
+                } else if (row.payment_type === 'weekly') {
+                    rate = row.weekly_rate || 0;
+                    unit = '/week';
+                } else if (row.payment_type === 'contract') {
+                    rate = row.contract_amount || 0;
+                    unit = ' total';
+                } else {
+                    // Fixed monthly salary
+                    rate = value || 0;
+                    unit = '/month';
+                }
+
+                return (
+                    <div>
+                        <p className="font-semibold">
+                            {formatPKR(rate)}{unit}
+                        </p>
+                        <p className="text-xs text-muted-foreground capitalize">
+                            {row.payment_type || row.salary_type || 'fixed'}
+                        </p>
+                    </div>
+                );
+            },
+        },
         {
             key: 'join_date' as const,
             label: 'Join Date',
@@ -439,7 +459,15 @@ export default function Employees() {
 
     // Calculate summary stats
     const activeEmployees = filteredData.filter((emp: any) => emp.is_active === 1);
-    const totalMonthlySalary = activeEmployees.reduce((sum: number, emp: any) => sum + (emp.salary_type === 'monthly' ? emp.salary : emp.salary * 4), 0);
+    // Calculate total monthly salary cost (for monthly fixed employees only)
+    const totalMonthlySalary = activeEmployees.reduce((sum: number, emp: any) => {
+        if (emp.payment_type === 'fixed' || emp.salary_type === 'monthly') {
+            return sum + (emp.salary || 0);
+        }
+        // For hourly/daily/weekly, don't include in monthly salary total
+        // They will be counted in wages separately
+        return sum;
+    }, 0);
 
     const { setTitle, setSubtitle } = useHeader();
 
@@ -483,20 +511,22 @@ export default function Employees() {
                         </CardContent>
                     </Card>
 
-                    <Card>
-                        <CardContent className="p-4 sm:p-6">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-xs sm:text-sm text-muted-foreground">Monthly Salary</p>
-                                    <p className="text-lg sm:text-2xl font-bold text-secondary break-words">
-                                        {formatPKR(totalMonthlySalary)}
-                                    </p>
-                                </div>
-                                <Banknote className="h-5 w-5 sm:h-6 sm:w-6 text-secondary flex-shrink-0" />
-                            </div>
-                        </CardContent>
-                    </Card>
-
+                  <Card>
+    <CardContent className="p-4 sm:p-6">
+        <div className="flex items-center justify-between">
+            <div>
+                <p className="text-xs sm:text-sm text-muted-foreground">Monthly Salary Cost</p>
+                <p className="text-lg sm:text-2xl font-bold text-secondary break-words">
+                    {formatPKR(totalMonthlySalary)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                    From {activeEmployees.filter(e => e.payment_type === 'fixed' || e.salary_type === 'monthly').length} monthly employees
+                </p>
+            </div>
+            <Banknote className="h-5 w-5 sm:h-6 sm:w-6 text-secondary flex-shrink-0" />
+        </div>
+    </CardContent>
+</Card>
                     <Card>
                         <CardContent className="p-4 sm:p-6">
                             <div className="flex items-center justify-between">

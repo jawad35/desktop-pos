@@ -86,31 +86,22 @@ export default function EmployeeDetails({ employeeId }) {
     const [, setLocation] = useLocation();
     const [selectedTab, setSelectedTab] = useState("attendance");
     const [attendanceDate, setAttendanceDate] = useState(format(new Date(), 'yyyy-MM-dd'));
-    const [salaryDate, setSalaryDate] = useState(format(new Date(), 'yyyy-MM'));
-    const [bonuses, setBonuses] = useState("0");
-    const [deductions, setDeductions] = useState("0");
-    const [salaryStatus, setSalaryStatus] = useState<'pending' | 'paid' | 'cancelled'>('pending');
-    const { toast } = useToast();
     const [showPaymentManager, setShowPaymentManager] = useState(false);
 
     const [attendanceFilterMonth, setAttendanceFilterMonth] = useState(format(new Date(), 'yyyy-MM'));
     const [salaryFilterMonth, setSalaryFilterMonth] = useState(format(new Date(), 'yyyy-MM'));
 
-    const [isSalaryEditModalOpen, setIsSalaryEditModalOpen] = useState(false);
     const [isAttendanceEditModalOpen, setIsAttendanceEditModalOpen] = useState(false);
-    const [editingSalary, setEditingSalary] = useState<Salary | null>(null);
     const [editingAttendance, setEditingAttendance] = useState<Attendance | null>(null);
     const [tempAttendanceStatus, setTempAttendanceStatus] = useState<'present' | 'absent' | 'leave'>('present');
-    const [showOutstandingAdvances, setShowOutstandingAdvances] = useState(false);
 
-    const [salaryPage, setSalaryPage] = useState(1);
-    const [salaryPageSize] = useState(10);
     const [paymentHistoryPage, setPaymentHistoryPage] = useState(1);
     const [paymentHistoryPageSize] = useState(10);
 
     const getDaysInMonth = (year: number, month: number) => {
         return new Date(year, month, 0).getDate();
     };
+    const { toast } = useToast();
 
     const calculateAttendanceSummary = (attendanceList: Attendance[], year: number, month: number) => {
         const filtered = attendanceList.filter(a => {
@@ -196,7 +187,7 @@ export default function EmployeeDetails({ employeeId }) {
                 notes: salary.notes,
             }));
         },
-        enabled: !!employeeId && employee?.payment_type === 'fixed',
+        enabled: !!employeeId,
     });
 
     // Fetch Employee Payments (Wages, Extra Work, Advances Repayment)
@@ -239,94 +230,8 @@ export default function EmployeeDetails({ employeeId }) {
         },
     });
 
-    const createSalaryMutation = useMutation({
-        mutationFn: async (salaryData: any) => {
-            const [year, month] = salaryData.month.split('-');
-            const existingSalaries = await api.getSalaries(employeeId, month, year.toString());
-            let existingSalary = null;
-            if (Array.isArray(existingSalaries) && existingSalaries.length > 0) {
-                existingSalary = existingSalaries[0];
-            } else if (existingSalaries?.success && Array.isArray(existingSalaries.data) && existingSalaries.data.length > 0) {
-                existingSalary = existingSalaries.data[0];
-            }
-
-            const data = {
-                employeeId: employeeId,
-                month: month,
-                year: salaryData.year,
-                basicSalary: parseFloat(salaryData.basicSalary) || 0,
-                bonuses: parseFloat(salaryData.bonuses) || 0,
-                deductions: parseFloat(salaryData.deductions) || 0,
-                netSalary: parseFloat(salaryData.netSalary) || 0,
-                status: salaryData.status,
-                paymentMethod: salaryData.paymentMethod || 'cash',
-                userId: 'system',
-                shopId: 'default'
-            };
-
-            if (existingSalary) {
-                const result = await api.updateSalary(existingSalary.id, data);
-                return { ...result, isUpdate: true };
-            } else {
-                const result = await api.createSalary(data);
-                return { ...result, isUpdate: false };
-            }
-        },
-        onSuccess: (result) => {
-            toast({ title: "Success", description: result?.isUpdate ? "Salary record updated" : "Salary record added" });
-            refetchSalaries();
-            setBonuses("0");
-            setDeductions("0");
-            setSalaryStatus('pending');
-        },
-        onError: (error: Error) => {
-            toast({ title: "Error", description: error.message, variant: "destructive" });
-        },
-    });
-
     const handleMarkAttendance = (status: 'present' | 'absent' | 'leave') => {
         markAttendanceMutation.mutate({ date: attendanceDate, status });
-    };
-
-    const handleAddSalary = () => {
-        if (!salaryDate) {
-            toast({ title: "Error", description: "Please select a month", variant: "destructive" });
-            return;
-        }
-        const [year, month] = salaryDate.split('-');
-        const basic = parseFloat(employee?.salary?.toString() || "0");
-        const bonus = parseFloat(bonuses) || 0;
-        const deduction = parseFloat(deductions) || 0;
-        const netSalary = basic + bonus - deduction;
-
-        createSalaryMutation.mutate({
-            month: month,
-            year: parseInt(year),
-            basicSalary: basic,
-            bonuses: bonus,
-            deductions: deduction,
-            netSalary: netSalary,
-            status: salaryStatus,
-            payment_method: employee?.payment_method,
-        });
-    };
-
-    const handleShareSalarySlip = (salary: Salary) => {
-        if (!employee) return;
-        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-        const monthName = monthNames[parseInt(salary.month) - 1];
-        const message = `*Salary Slip - ${monthName} ${salary.year}*%0A%0A` +
-            `Employee: ${employee.name}%0A` +
-            `Phone: ${employee.phone}%0A` +
-            `Basic Salary: ${formatPKR(salary.basicSalary)}%0A` +
-            `Bonuses: ${formatPKR(salary.bonuses)}%0A` +
-            `Deductions: ${formatPKR(salary.deductions)}%0A` +
-            `*Net Salary: ${formatPKR(salary.netSalary)}*%0A` +
-            `Status: ${salary.status.toUpperCase()}%0A` +
-            `Payment Method: ${employee.payment_method}%0A%0A` +
-            `Thank you for your hard work!`;
-        const whatsappUrl = `https://wa.me/+92${employee.phone.replace(/\D/g, '').replace(/^0/, '')}?text=${message}`;
-        window.open(whatsappUrl, '_blank');
     };
 
     // Sales Filters
@@ -396,7 +301,6 @@ export default function EmployeeDetails({ employeeId }) {
     const totalWagesPaid = employeePayments.filter(p => p.payment_type !== 'advance_repayment').reduce((sum, p) => sum + p.amount, 0);
     const totalEmployeeCost = totalSalariesPaid + totalWagesPaid;
     const totalOutstandingAdvances = advances.filter(a => a.status !== 'completed').reduce((sum, a) => sum + a.remaining_amount, 0);
-    const netSalaryCalculation = parseFloat(employee?.salary || "0") + parseFloat(bonuses) - parseFloat(deductions);
 
     const { setTitle, setSubtitle } = useHeader();
 
@@ -414,29 +318,6 @@ export default function EmployeeDetails({ employeeId }) {
     if (!employee) {
         return (<div className="flex-1 flex items-center justify-center"><p>Employee not found</p></div>);
     }
-
-    const handleUpdateSalary = async () => {
-        if (!editingSalary) return;
-        try {
-            const result = await api.updateSalary(editingSalary.id, {
-                basicSalary: editingSalary.basicSalary,
-                bonuses: editingSalary.bonuses,
-                deductions: editingSalary.deductions,
-                netSalary: editingSalary.netSalary,
-                status: editingSalary.status,
-                payment_method: editingSalary.payment_method,
-                notes: editingSalary.notes,
-            });
-            if (result.success) {
-                toast({ title: "Success", description: "Salary record updated" });
-                refetchSalaries();
-                setIsSalaryEditModalOpen(false);
-                setEditingSalary(null);
-            }
-        } catch (error) {
-            toast({ title: "Error", description: error.message, variant: "destructive" });
-        }
-    };
 
     const handleUpdateAttendance = async () => {
         if (!editingAttendance) return;
@@ -495,14 +376,13 @@ export default function EmployeeDetails({ employeeId }) {
             payment_method: p.payment_method,
             notes: p.description
         }))
-    ].filter(p => p.date) // Filter out entries with invalid dates
+    ].filter(p => p.date)
         .sort((a, b) => {
             const dateA = new Date(a.date);
             const dateB = new Date(b.date);
             if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return 0;
             return dateB.getTime() - dateA.getTime();
         });
-
 
     const paginatedPayments = allPayments.slice((paymentHistoryPage - 1) * paymentHistoryPageSize, paymentHistoryPage * paymentHistoryPageSize);
     const totalPaymentPages = Math.ceil(allPayments.length / paymentHistoryPageSize);
@@ -534,11 +414,10 @@ export default function EmployeeDetails({ employeeId }) {
                 </div>
 
                 <Tabs value={selectedTab} onValueChange={setSelectedTab} className="w-full">
-                    <TabsList className="grid w-full grid-cols-3">
+                    <TabsList className="grid w-full grid-cols-2">
                         <TabsTrigger value="attendance">📅 Attendance</TabsTrigger>
                         {employee.employee_type === "salesman" && <TabsTrigger value="sales">📦 Sales</TabsTrigger>}
                         <TabsTrigger value="payments">💰 Payments History</TabsTrigger>
-                        {isMonthlyEmployee && <TabsTrigger value="salary">📊 Salary Management</TabsTrigger>}
                     </TabsList>
 
                     {/* ATTENDANCE TAB */}
@@ -635,7 +514,15 @@ export default function EmployeeDetails({ employeeId }) {
                     {/* PAYMENTS HISTORY TAB - Shows ALL payments (Salaries + Wages + Extra Work) */}
                     <TabsContent value="payments">
                         <Card>
-                            <CardHeader><CardTitle>Complete Payment History</CardTitle></CardHeader>
+                            <CardHeader>
+                                <div className="flex justify-between items-center">
+                                    <CardTitle>Complete Payment History</CardTitle>
+                                    <Button onClick={() => setShowPaymentManager(true)}>
+                                        <Banknote className="h-4 w-4 mr-2" />
+                                        Manage Payments
+                                    </Button>
+                                </div>
+                            </CardHeader>
                             <CardContent>
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                                     <Card className="bg-green-50"><CardContent className="p-4"><p className="text-sm text-muted-foreground">💰 Total Salaries Paid</p><p className="text-2xl font-bold text-green-600">{formatPKR(totalSalariesPaid)}</p></CardContent></Card>
@@ -648,7 +535,6 @@ export default function EmployeeDetails({ employeeId }) {
                                 ) : (
                                     <div className="space-y-3">
                                         {paginatedPayments.map((payment) => {
-                                            // Safe date formatting
                                             let displayDate = "Date not set";
                                             if (payment.date) {
                                                 try {
@@ -708,47 +594,9 @@ export default function EmployeeDetails({ employeeId }) {
                             </CardContent>
                         </Card>
                     </TabsContent>
-
-                    {/* SALARY MANAGEMENT TAB - Only for monthly employees */}
-                    {isMonthlyEmployee && (
-                        <TabsContent value="salary">
-                            <Card>
-                                <CardHeader><CardTitle>Salary Management</CardTitle></CardHeader>
-                                <CardContent>
-                                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6 p-4 bg-muted/30 rounded-lg">
-                                        <div><label className="text-sm font-medium mb-2 block">Month</label><Input type="month" value={salaryDate} onChange={(e) => setSalaryDate(e.target.value)} /></div>
-                                        <div><label className="text-sm font-medium mb-2 block">Basic Salary</label><Input type="number" value={employee.salary} disabled className="bg-muted" /></div>
-                                        <div><label className="text-sm font-medium mb-2 block">Bonuses</label><Input type="number" value={bonuses} onChange={(e) => setBonuses(e.target.value)} placeholder="0" /></div>
-                                        <div><label className="text-sm font-medium mb-2 block">Deductions</label><Input type="number" value={deductions} onChange={(e) => setDeductions(e.target.value)} placeholder="0" /></div>
-                                        <div><label className="text-sm font-medium mb-2 block">Status</label><Select value={salaryStatus} onValueChange={(value: any) => setSalaryStatus(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pending">Pending</SelectItem><SelectItem value="paid">Paid</SelectItem><SelectItem value="cancelled">Cancelled</SelectItem></SelectContent></Select></div>
-                                    </div>
-
-                                    <div className="flex flex-col sm:flex-row justify-between items-center mb-6 p-4 bg-primary/10 rounded-lg"><div><p className="text-sm text-muted-foreground">Net Salary Calculation</p><p className="text-lg font-semibold">{formatPKR(employee.salary)} + {formatPKR(parseFloat(bonuses))} - {formatPKR(parseFloat(deductions))} = <span className="text-secondary ml-2">{formatPKR(netSalaryCalculation)}</span></p></div><Button onClick={handleAddSalary} disabled={createSalaryMutation.isPending} className="mt-2 sm:mt-0">{createSalaryMutation.isPending ? "Adding..." : "Add Salary Record"}</Button></div>
-
-                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6"><Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Paid</p><p className="text-2xl font-bold text-green-600">{formatPKR(totalSalariesPaid)}</p></CardContent></Card><Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Pending</p><p className="text-2xl font-bold text-yellow-600">{formatPKR(salaries.filter(s => s.status === 'pending').reduce((sum, s) => sum + s.netSalary, 0))}</p></CardContent></Card><Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Records</p><p className="text-2xl font-bold">{salaries.length}</p></CardContent></Card></div>
-
-                                    <div className="flex flex-wrap gap-4 mb-6 p-4 bg-muted/30 rounded-lg"><div><label className="text-sm font-medium mb-2 block">Filter by Month</label><Input type="month" value={salaryFilterMonth} onChange={(e) => setSalaryFilterMonth(e.target.value)} className="w-48" /></div></div>
-
-                                    <div className="space-y-4"><h3 className="text-lg font-semibold">Salary History</h3>
-                                        {salariesLoading ? (<div className="flex justify-center py-8"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div></div>) : (() => {
-                                            let filteredSalaries = [...salaries];
-                                            if (salaryFilterMonth) {
-                                                const [filterYear, filterMonth] = salaryFilterMonth.split('-');
-                                                filteredSalaries = salaries.filter(s => s.year.toString() === filterYear && s.month === filterMonth);
-                                            }
-                                            filteredSalaries = filteredSalaries.sort((a, b) => { if (a.year !== b.year) return b.year - a.year; return parseInt(b.month) - parseInt(a.month); });
-                                            const paginatedSalaries = filteredSalaries.slice((salaryPage - 1) * salaryPageSize, salaryPage * salaryPageSize);
-                                            return (<>{filteredSalaries.length === 0 ? (<div className="text-center py-8"><Banknote className="h-12 w-12 mx-auto mb-2" /><p>No salary records for {salaryFilterMonth}</p></div>) : (paginatedSalaries.map((salary) => (<div key={salary.id} className="flex flex-col sm:flex-row justify-between p-4 border rounded-lg"><div><p className="font-medium">{format(new Date(salary.year, parseInt(salary.month) - 1, 1), "MMMM yyyy")}</p><div className="grid grid-cols-3 gap-2 text-sm text-muted-foreground mt-1"><span>Basic: {formatPKR(salary.basicSalary)}</span><span>Bonus: {formatPKR(salary.bonuses)}</span><span>Deduction: {formatPKR(salary.deductions)}</span></div>{salary.notes && <p className="text-xs text-muted-foreground mt-1">Note: {salary.notes}</p>}</div><div className="text-right"><p className="text-lg font-bold text-secondary">{formatPKR(salary.netSalary)}</p><Badge className={salary.status === "paid" ? "bg-green-100 text-green-800" : salary.status === "cancelled" ? "bg-red-100 text-red-800" : "bg-yellow-100 text-yellow-800"}>{salary.status.toUpperCase()}</Badge><div className="flex justify-end gap-2 mt-2"><Button size="sm" variant="ghost" onClick={() => { setEditingSalary(salary); setIsSalaryEditModalOpen(true); }}><Edit className="h-4 w-4" />Edit</Button><Button size="sm" variant="ghost" onClick={() => handleShareSalarySlip(salary)}><Share className="h-4 w-4" />Share</Button></div></div></div>)))}</>);
-                                        })()}
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        </TabsContent>
-                    )}
                 </Tabs>
             </main>
 
-            <EditSalaryModal isOpen={isSalaryEditModalOpen} onClose={() => setIsSalaryEditModalOpen(false)} editingSalary={editingSalary} setEditingSalary={setEditingSalary} onSave={handleUpdateSalary} />
             <EditAttendanceModal isOpen={isAttendanceEditModalOpen} onClose={() => setIsAttendanceEditModalOpen(false)} editingAttendance={editingAttendance} setEditingAttendance={setEditingAttendance} tempAttendanceStatus={tempAttendanceStatus} setTempAttendanceStatus={setTempAttendanceStatus} onSave={handleUpdateAttendance} />
 
             {showPaymentManager && (

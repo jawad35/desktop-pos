@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatPKR } from "@/lib/currency";
 import { format } from "date-fns";
-import { Calendar, Banknote, Download, AlertCircle, CheckCircle, Clock, Plus, Eye, Edit, Trash2, Search, Filter, ChevronLeft, ChevronRight } from "lucide-react";
+import { Calendar, Banknote, Download, AlertCircle, CheckCircle, Clock, Plus, Eye, Edit, Trash2, Search, Filter, ChevronLeft, ChevronRight, Calculator } from "lucide-react";
 import { api } from "../../services/electron-api";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
@@ -29,6 +29,7 @@ interface Employee {
     contract_amount: number;
     contract_start_date?: string;
     contract_end_date?: string;
+    salary_type?: string;
 }
 
 interface EmployeePayment {
@@ -70,6 +71,21 @@ interface SalaryDeduction {
     notes?: string;
 }
 
+interface Salary {
+    id: string;
+    employeeId: string;
+    month: string;
+    year: number;
+    basicSalary: number;
+    deductions: number;
+    bonuses: number;
+    netSalary: number;
+    status: 'pending' | 'paid' | 'cancelled';
+    paymentDate?: string;
+    payment_method?: string;
+    notes?: string;
+}
+
 export default function EmployeePaymentManager({ employeeId, onClose, onPaymentUpdate }: { employeeId: string; onClose: () => void; onPaymentUpdate?: () => void }) {
     const [selectedTab, setSelectedTab] = useState("wages");
     const [paymentAmount, setPaymentAmount] = useState(0);
@@ -80,6 +96,13 @@ export default function EmployeePaymentManager({ employeeId, onClose, onPaymentU
     const [periodEnd, setPeriodEnd] = useState(format(new Date(), 'yyyy-MM-dd'));
     const [isSubmitting, setIsSubmitting] = useState(false);
     const { toast } = useToast();
+
+    // Salary Management States (for monthly employees)
+    const [salaryMonth, setSalaryMonth] = useState(format(new Date(), 'yyyy-MM'));
+    const [salaryBonuses, setSalaryBonuses] = useState(0);
+    const [salaryDeductions, setSalaryDeductions] = useState(0);
+    const [salaryStatus, setSalaryStatus] = useState<'pending' | 'paid' | 'cancelled'>('pending');
+    const [salaryNotes, setSalaryNotes] = useState("");
 
     // Pagination states for payment history
     const [paymentHistoryPage, setPaymentHistoryPage] = useState(1);
@@ -129,6 +152,7 @@ export default function EmployeePaymentManager({ employeeId, onClose, onPaymentU
 
     // Paid dates tracking
     const [paidDates, setPaidDates] = useState<string[]>([]);
+    const [showSalaryManagement, setShowSalaryManagement] = useState(false);
 
     // Fetch salary deductions
     const { data: salaryDeductionsData = [], refetch: refetchDeductions } = useQuery({
@@ -158,6 +182,32 @@ export default function EmployeePaymentManager({ employeeId, onClose, onPaymentU
         },
     });
 
+    // Fetch salaries
+    const { data: salaries = [], refetch: refetchSalaries } = useQuery<Salary[]>({
+        queryKey: ["salaries", employeeId],
+        queryFn: async () => {
+            const result = await api.getSalaries(employeeId);
+            let salariesData = [];
+            if (Array.isArray(result)) salariesData = result;
+            else if (result?.success && Array.isArray(result.data)) salariesData = result.data;
+            return salariesData.map((salary: any) => ({
+                id: salary.id,
+                employeeId: salary.employee_id,
+                month: salary.month,
+                year: salary.year,
+                basicSalary: salary.basic_salary,
+                deductions: salary.deductions,
+                bonuses: salary.bonuses,
+                netSalary: salary.net_salary,
+                status: salary.status,
+                paymentDate: salary.payment_date,
+                payment_method: salary.payment_method,
+                notes: salary.notes,
+            }));
+        },
+        enabled: !!employeeId,
+    });
+
     // Fetch advances
     const { data: advances = [], refetch: refetchAdvances } = useQuery<EmployeeAdvance[]>({
         queryKey: ["employeeAdvances", employeeId],
@@ -167,15 +217,81 @@ export default function EmployeePaymentManager({ employeeId, onClose, onPaymentU
         },
     });
 
-    // Fetch salaries to sync total paid
-    const { data: salaries = [] } = useQuery({
-        queryKey: ["salaries", employeeId],
-        queryFn: async () => {
-            const result = await api.getSalaries(employeeId);
-            return Array.isArray(result) ? result : [];
+    // Check if employee is monthly/salary type
+    const isMonthlyEmployee = employee?.payment_type === 'fixed' || employee?.salary_type === 'monthly';
+
+    // Create/Update Salary Mutation
+    const createSalaryMutation = useMutation({
+        mutationFn: async (salaryData: any) => {
+            const [year, month] = salaryData.month.split('-');
+            const existingSalaries = await api.getSalaries(employeeId, month, year.toString());
+            let existingSalary = null;
+            if (Array.isArray(existingSalaries) && existingSalaries.length > 0) {
+                existingSalary = existingSalaries[0];
+            } else if (existingSalaries?.success && Array.isArray(existingSalaries.data) && existingSalaries.data.length > 0) {
+                existingSalary = existingSalaries.data[0];
+            }
+
+            const data = {
+                employeeId: employeeId,
+                month: month,
+                year: salaryData.year,
+                basicSalary: parseFloat(salaryData.basicSalary) || 0,
+                bonuses: parseFloat(salaryData.bonuses) || 0,
+                deductions: parseFloat(salaryData.deductions) || 0,
+                netSalary: parseFloat(salaryData.netSalary) || 0,
+                status: salaryData.status,
+                paymentMethod: salaryData.paymentMethod || 'cash',
+                userId: 'system',
+                shopId: 'default',
+                notes: salaryData.notes
+            };
+
+            if (existingSalary) {
+                const result = await api.updateSalary(existingSalary.id, data);
+                return { ...result, isUpdate: true };
+            } else {
+                const result = await api.createSalary(data);
+                return { ...result, isUpdate: false };
+            }
         },
-        enabled: !!employeeId,
+        onSuccess: (result) => {
+            toast({ title: "Success", description: result?.isUpdate ? "Salary record updated" : "Salary record added" });
+            refetchSalaries();
+            if (onPaymentUpdate) onPaymentUpdate();
+            setSalaryBonuses(0);
+            setSalaryDeductions(0);
+            setSalaryStatus('pending');
+            setSalaryNotes("");
+        },
+        onError: (error: Error) => {
+            toast({ title: "Error", description: error.message, variant: "destructive" });
+        },
     });
+
+    const handleCreateSalary = () => {
+        if (!salaryMonth) {
+            toast({ title: "Error", description: "Please select a month", variant: "destructive" });
+            return;
+        }
+        const [year, month] = salaryMonth.split('-');
+        const basic = parseFloat(employee?.salary?.toString() || "0");
+        const bonus = parseFloat(salaryBonuses?.toString() || "0");
+        const deduction = parseFloat(salaryDeductions?.toString() || "0");
+        const netSalary = basic + bonus - deduction;
+
+        createSalaryMutation.mutate({
+            month: salaryMonth,
+            year: parseInt(year),
+            basicSalary: basic,
+            bonuses: bonus,
+            deductions: deduction,
+            netSalary: netSalary,
+            status: salaryStatus,
+            paymentMethod: employee?.payment_method,
+            notes: salaryNotes
+        });
+    };
 
     // Update paid dates list from payments
     useEffect(() => {
@@ -269,91 +385,110 @@ export default function EmployeePaymentManager({ employeeId, onClose, onPaymentU
         return unpaidDays;
     }, [paidDates]);
 
-    const calculateWages = () => {
-        if (!employee) return 0;
+   const calculateWages = () => {
+    if (!employee) return 0;
+    if (employee.payment_type === 'fixed' || employee.salary_type === 'monthly') return 0; // Monthly employees handled separately
 
-        const unpaidDays = getUnpaidDaysInPeriod(periodStart, periodEnd);
-        const unpaidDaysCount = unpaidDays.length;
-        
-        if (unpaidDaysCount === 0) return 0;
-        
-        const weeks = Math.ceil(unpaidDaysCount / 7);
-        const hours = unpaidDaysCount * 8;
+    const unpaidDays = getUnpaidDaysInPeriod(periodStart, periodEnd);
+    const unpaidDaysCount = unpaidDays.length;
+    
+    if (unpaidDaysCount === 0) return 0;
+    
+    const weeks = Math.ceil(unpaidDaysCount / 7);
+    const hours = unpaidDaysCount * 8;
 
-        switch (employee.payment_type) {
-            case 'daily':
-                return employee.daily_rate * unpaidDaysCount;
-            case 'weekly':
-                return employee.weekly_rate * weeks;
-            case 'hourly':
-                return employee.hourly_rate * hours;
-            case 'fixed':
-                const end = new Date(periodEnd);
-                const daysInMonth = new Date(end.getFullYear(), end.getMonth() + 1, 0).getDate();
-                return (employee.salary / daysInMonth) * unpaidDaysCount;
-            case 'contract':
-                return employee.contract_amount;
-            default:
-                return 0;
-        }
-    };
+    switch (employee.payment_type) {
+        case 'contract':
+            // For contractors, calculate daily rate from contract amount
+            if (employee.contract_amount && employee.contract_start_date && employee.contract_end_date) {
+                const contractStart = new Date(employee.contract_start_date);
+                const contractEnd = new Date(employee.contract_end_date);
+                const contractDays = Math.ceil((contractEnd.getTime() - contractStart.getTime()) / (1000 * 60 * 60 * 24));
+                const dailyRate = employee.contract_amount / contractDays;
+                return dailyRate * unpaidDaysCount;
+            }
+            return employee.contract_amount || 0;
+        case 'daily':
+            return employee.daily_rate * unpaidDaysCount;
+        case 'weekly':
+            return employee.weekly_rate * weeks;
+        case 'hourly':
+            return employee.hourly_rate * hours;
+        default:
+            return 0;
+    }
+};
 
     // Calculate total paid (synced with salaries and payments)
-    const totalPaidWages = payments.reduce((sum, p) => sum + p.amount, 0);
+    const totalPaidWages = payments.filter(p => p.payment_type !== 'salary').reduce((sum, p) => sum + p.amount, 0);
     const totalSalariesPaid = salaries.filter(s => s.status === 'paid').reduce((sum, s) => sum + s.netSalary, 0);
     const totalEmployeeCost = totalPaidWages + totalSalariesPaid;
 
     const handlePayWages = async () => {
-        if (paymentAmount <= 0) {
-            toast({ title: "Error", description: "Please enter a valid amount", variant: "destructive" });
-            return;
-        }
+    if (paymentAmount <= 0) {
+        toast({ title: "Error", description: "Please enter a valid amount", variant: "destructive" });
+        return;
+    }
 
-        const paidDaysInSelectedPeriod = getPaidDaysInPeriod(periodStart, periodEnd);
-        const unpaidDays = getUnpaidDaysInPeriod(periodStart, periodEnd);
-        
-        if (unpaidDays.length === 0) {
-            toast({ title: "No Unpaid Days", description: "All days in this period have already been paid.", variant: "destructive" });
-            return;
-        }
+    const paidDaysInSelectedPeriod = getPaidDaysInPeriod(periodStart, periodEnd);
+    const unpaidDays = getUnpaidDaysInPeriod(periodStart, periodEnd);
+    
+    if (unpaidDays.length === 0) {
+        toast({ title: "No Unpaid Days", description: "All days in this period have already been paid.", variant: "destructive" });
+        return;
+    }
 
-        if (paidDaysInSelectedPeriod.length > 0) {
-            toast({
-                title: "Partial Period Payment",
-                description: `${paidDaysInSelectedPeriod.length} day(s) already paid. Paying for ${unpaidDays.length} unpaid day(s).`,
-                variant: "default"
-            });
-        }
+    if (paidDaysInSelectedPeriod.length > 0) {
+        toast({
+            title: "Partial Period Payment",
+            description: `${paidDaysInSelectedPeriod.length} day(s) already paid. Paying for ${unpaidDays.length} unpaid day(s).`,
+            variant: "default"
+        });
+    }
 
-        setIsSubmitting(true);
-        try {
-            const result = await api.createEmployeePayment({
-                employee_id: employeeId,
-                payment_date: new Date().toISOString(),
-                amount: paymentAmount,
-                payment_type: paymentType,
-                period_start: periodStart,
-                period_end: periodEnd,
-                description: paymentNotes || `Wage payment for ${unpaidDays.length} unpaid days`,
-                status: 'completed',
-                payment_method: paymentMethod,
-                user_id: 'system',
-                shop_id: 'default'
-            });
+    // Determine correct payment_type based on employee's payment_type
+    let actualPaymentType = paymentType;
+    if (employee?.payment_type === 'contract') {
+        actualPaymentType = 'contract'; // Contractors should use 'contract' type
+    } else if (employee?.payment_type === 'fixed' || employee?.salary_type === 'monthly') {
+        actualPaymentType = 'salary'; // Monthly salaried employees use 'salary'
+    } else if (employee?.payment_type === 'daily') {
+        actualPaymentType = 'daily';
+    } else if (employee?.payment_type === 'weekly') {
+        actualPaymentType = 'weekly';
+    } else if (employee?.payment_type === 'hourly') {
+        actualPaymentType = 'hourly';
+    }
 
-            if (result.success) {
-                toast({ title: "Success", description: `Paid ${unpaidDays.length} day(s) - ${formatPKR(paymentAmount)}` });
-                refetchPayments();
-                if (onPaymentUpdate) onPaymentUpdate();
-                setPaymentAmount(0);
-                setPaymentNotes("");
-            }
-        } catch (error: any) {
-            toast({ title: "Error", description: error.message, variant: "destructive" });
-        } finally {
-            setIsSubmitting(false);
+    setIsSubmitting(true);
+    try {
+        const result = await api.createEmployeePayment({
+            employee_id: employeeId,
+            payment_date: new Date().toISOString(),
+            amount: paymentAmount,
+            payment_type: actualPaymentType, // Use the corrected type
+            period_start: periodStart,
+            period_end: periodEnd,
+            description: paymentNotes || `${employee?.payment_type === 'contract' ? 'Contract payment' : 'Wage payment'} for ${unpaidDays.length} unpaid days`,
+            status: 'completed',
+            payment_method: paymentMethod,
+            user_id: 'system',
+            shop_id: 'default'
+        });
+
+        if (result.success) {
+            toast({ title: "Success", description: `Paid ${unpaidDays.length} day(s) - ${formatPKR(paymentAmount)}` });
+            refetchPayments();
+            if (onPaymentUpdate) onPaymentUpdate();
+            setPaymentAmount(0);
+            setPaymentNotes("");
         }
-    };
+    } catch (error: any) {
+        toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+        setIsSubmitting(false);
+    }
+};
 
     const handleCreateAdvance = async () => {
         if (newAdvanceAmount <= 0 || !newAdvanceReason) {
@@ -674,6 +809,28 @@ export default function EmployeePaymentManager({ employeeId, onClose, onPaymentU
     const paginatedPayments = filteredPayments.slice((paymentHistoryPage - 1) * itemsPerPage, paymentHistoryPage * itemsPerPage);
     const totalPaymentPages = Math.ceil(filteredPayments.length / itemsPerPage);
 
+    // Salary History Filter
+    const [salaryFilterMonth, setSalaryFilterMonth] = useState(format(new Date(), 'yyyy-MM'));
+    const [salaryPage, setSalaryPage] = useState(1);
+    const salaryPageSize = 10;
+
+    const filteredSalaries = [...salaries].filter(s => {
+        if (salaryFilterMonth) {
+            const [filterYear, filterMonth] = salaryFilterMonth.split('-');
+            return s.year.toString() === filterYear && s.month === filterMonth;
+        }
+        return true;
+    }).sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        return parseInt(b.month) - parseInt(a.month);
+    });
+
+    const paginatedSalaries = filteredSalaries.slice((salaryPage - 1) * salaryPageSize, salaryPage * salaryPageSize);
+    const totalSalaryPages = Math.ceil(filteredSalaries.length / salaryPageSize);
+
+    const totalSalariesOutstanding = salaries.filter(s => s.status === 'pending').reduce((sum, s) => sum + s.netSalary, 0);
+    const netSalaryCalculation = (employee?.salary || 0) + salaryBonuses - salaryDeductions;
+
     useEffect(() => {
         if (employee) {
             if (employee.payment_type === 'fixed') setHourlyRate(employee.salary / (30 * 8));
@@ -697,141 +854,236 @@ export default function EmployeePaymentManager({ employeeId, onClose, onPaymentU
                     <DialogTitle>Payment Management - {employee?.name}</DialogTitle>
                     <DialogDescription>
                         Total Employee Cost: {formatPKR(totalEmployeeCost)} | Outstanding Advances: {formatPKR(totalAdvances)}
+                        {isMonthlyEmployee && ` | Outstanding Salaries: ${formatPKR(totalSalariesOutstanding)}`}
                     </DialogDescription>
                 </DialogHeader>
 
                 <Tabs value={selectedTab} onValueChange={setSelectedTab} className="w-full">
-                    <TabsList className="grid w-full grid-cols-3">
-                        <TabsTrigger value="wages">💰 Pay Wages</TabsTrigger>
+                    <TabsList className="grid w-full grid-cols-4">
+                        {!isMonthlyEmployee && <TabsTrigger value="wages">💰 Pay Wages</TabsTrigger>}
+                        {isMonthlyEmployee && <TabsTrigger value="salary">📊 Salary Management</TabsTrigger>}
                         <TabsTrigger value="advances">📝 Advances / Debit</TabsTrigger>
                         <TabsTrigger value="history">📜 Payment History</TabsTrigger>
+                        <TabsTrigger value="extrawork">⏰ Extra Work</TabsTrigger>
                     </TabsList>
 
-                    {/* Wages Tab */}
-                    <TabsContent value="wages" className="space-y-4">
-                        {/* Extra Work Section */}
-                        <Card>
-                            <CardHeader>
-                                <CardTitle className="text-lg flex items-center gap-2">
-                                    <Clock className="h-5 w-5" />
-                                    Extra Work / Overtime
-                                </CardTitle>
-                                <CardDescription>Record extra hours or additional work beyond regular schedule</CardDescription>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                                    <div>
-                                        <Label>Extra Date</Label>
-                                        <Input type="date" value={extraWorkDate} onChange={(e) => setExtraWorkDate(e.target.value)} />
-                                    </div>
-                                    <div>
-                                        <Label>Extra Hours</Label>
-                                        <Input type="number" step="0.5" value={extraHours} onChange={(e) => setExtraHours(parseFloat(e.target.value) || 0)} placeholder="e.g., 2.5 hours" />
-                                        <p className="text-xs text-muted-foreground mt-1">Rate: {formatPKR(hourlyRate)}/hour</p>
-                                    </div>
-                                    <div>
-                                        <Label>Extra Amount</Label>
-                                        <Input type="number" value={extraAmount} onChange={(e) => setExtraAmount(parseFloat(e.target.value) || 0)} placeholder="Or enter amount directly" />
-                                    </div>
-                                </div>
-                                <div>
-                                    <Label>Reason for Extra Work</Label>
-                                    <Input value={extraWorkReason} onChange={(e) => setExtraWorkReason(e.target.value)} placeholder="e.g., Overtime, Holiday work, Special project" className="mb-3" />
-                                </div>
-                                <Button onClick={handleAddExtraWork} disabled={isSubmitting || (extraHours <= 0 && extraAmount <= 0)} variant="outline" className="w-full">
-                                    + Add Extra Work for {format(new Date(extraWorkDate), 'dd/MM/yyyy')}
-                                </Button>
-                            </CardContent>
-                        </Card>
+                    {/* SALARY MANAGEMENT TAB - For Monthly Employees */}
+                    {isMonthlyEmployee && (
+                        <TabsContent value="salary" className="space-y-4">
+                            {/* Salary Summary Cards */}
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Monthly Salary</p><p className="text-2xl font-bold text-blue-600">{formatPKR(employee?.salary || 0)}</p><p className="text-xs text-muted-foreground">Base salary per month</p></CardContent></Card>
+                                <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Paid</p><p className="text-2xl font-bold text-green-600">{formatPKR(totalSalariesPaid)}</p><p className="text-xs text-muted-foreground">All completed salaries</p></CardContent></Card>
+                                <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Outstanding</p><p className="text-2xl font-bold text-yellow-600">{formatPKR(totalSalariesOutstanding)}</p><p className="text-xs text-muted-foreground">Pending payments</p></CardContent></Card>
+                            </div>
 
-                        {/* Recent Extra Work List */}
-                        {extraWorkRecords.length > 0 && (
-                            <div>
-                                <h4 className="font-medium mb-2">Recent Extra Work Records</h4>
-                                <div className="space-y-2">
-                                    {extraWorkRecords.map((record) => (
-                                        <div key={record.id} className="flex justify-between items-center p-3 bg-muted/30 rounded-lg">
+                            {/* Create/Update Salary Form */}
+                            <Card>
+                                <CardHeader><CardTitle className="flex items-center gap-2"><Calculator className="h-5 w-5" />Create/Update Salary Record</CardTitle><CardDescription>Record monthly salary with bonuses and deductions</CardDescription></CardHeader>
+                                <CardContent>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                        <div>
+                                            <Label>Salary Month</Label>
+                                            <Input type="month" value={salaryMonth} onChange={(e) => setSalaryMonth(e.target.value)} />
+                                        </div>
+                                        <div>
+                                            <Label>Basic Salary</Label>
+                                            <Input type="number" value={employee?.salary || 0} disabled className="bg-muted" />
+                                        </div>
+                                        <div>
+                                            <Label>Bonuses (+)</Label>
+                                            <Input type="number" value={salaryBonuses} onChange={(e) => setSalaryBonuses(parseFloat(e.target.value) || 0)} placeholder="0" />
+                                            <p className="text-xs text-muted-foreground mt-1">Include overtime, performance bonus, etc.</p>
+                                        </div>
+                                        <div>
+                                            <Label>Deductions (-)</Label>
+                                            <Input type="number" value={salaryDeductions} onChange={(e) => setSalaryDeductions(parseFloat(e.target.value) || 0)} placeholder="0" />
+                                            <p className="text-xs text-muted-foreground mt-1">Include advance deductions, penalties, etc.</p>
+                                        </div>
+                                        <div>
+                                            <Label>Status</Label>
+                                            <Select value={salaryStatus} onValueChange={(value: any) => setSalaryStatus(value)}>
+                                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="pending">Pending</SelectItem>
+                                                    <SelectItem value="paid">Paid</SelectItem>
+                                                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                        <div>
+                                            <Label>Notes (Optional)</Label>
+                                            <Input value={salaryNotes} onChange={(e) => setSalaryNotes(e.target.value)} placeholder="Additional notes..." />
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-primary/10 rounded-lg p-4 mb-4">
+                                        <div className="flex justify-between items-center">
                                             <div>
-                                                <p className="font-medium">{record.description || 'Extra Work'}</p>
-                                                <p className="text-xs text-muted-foreground">{record.payment_date ? format(new Date(record.payment_date), 'dd/MM/yyyy') : 'Date not set'} • {record.hours || '-'} hours</p>
+                                                <p className="text-sm text-muted-foreground">Net Salary Calculation</p>
+                                                <p className="text-lg font-semibold">
+                                                    {formatPKR(employee?.salary || 0)} + {formatPKR(salaryBonuses)} - {formatPKR(salaryDeductions)} = 
+                                                    <span className="text-secondary ml-2">{formatPKR(netSalaryCalculation)}</span>
+                                                </p>
                                             </div>
-                                            <div className="text-right">
-                                                <p className="font-semibold text-green-600">{formatPKR(record.amount)}</p>
-                                                <div className="flex gap-1 mt-1">
-                                                    <Button size="sm" variant="ghost" onClick={() => handleEditExtraWork(record)}><Edit className="h-3 w-3" /></Button>
-                                                    <Button size="sm" variant="ghost" className="text-red-500" onClick={() => handleDeleteExtraWork(record.id)}><Trash2 className="h-3 w-3" /></Button>
+                                            <Button onClick={handleCreateSalary} disabled={createSalaryMutation.isPending}>
+                                                {createSalaryMutation.isPending ? "Processing..." : "Save Salary Record"}
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+
+                            {/* Salary History */}
+                            <Card>
+                                <CardHeader><CardTitle>Salary History</CardTitle></CardHeader>
+                                <CardContent>
+                                    <div className="flex flex-wrap gap-4 mb-6">
+                                        <div>
+                                            <Label>Filter by Month</Label>
+                                            <Input type="month" value={salaryFilterMonth} onChange={(e) => setSalaryFilterMonth(e.target.value)} className="w-48" />
+                                        </div>
+                                    </div>
+
+                                    {filteredSalaries.length === 0 ? (
+                                        <div className="text-center py-8"><Banknote className="h-12 w-12 mx-auto mb-2" /><p>No salary records for {salaryFilterMonth}</p></div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {paginatedSalaries.map((salary) => (
+                                                <div key={salary.id} className="flex flex-col sm:flex-row justify-between p-4 border rounded-lg">
+                                                    <div>
+                                                        <p className="font-medium">{format(new Date(salary.year, parseInt(salary.month) - 1, 1), "MMMM yyyy")}</p>
+                                                        <div className="grid grid-cols-3 gap-2 text-sm text-muted-foreground mt-1">
+                                                            <span>Basic: {formatPKR(salary.basicSalary)}</span>
+                                                            <span>Bonus: {formatPKR(salary.bonuses)}</span>
+                                                            <span>Deduction: {formatPKR(salary.deductions)}</span>
+                                                        </div>
+                                                        {salary.notes && <p className="text-xs text-muted-foreground mt-1">Note: {salary.notes}</p>}
+                                                    </div>
+                                                    <div className="text-right mt-2 sm:mt-0">
+                                                        <p className="text-lg font-bold text-secondary">{formatPKR(salary.netSalary)}</p>
+                                                        <Badge className={salary.status === "paid" ? "bg-green-100 text-green-800" : salary.status === "cancelled" ? "bg-red-100 text-red-800" : "bg-yellow-100 text-yellow-800"}>
+                                                            {salary.status.toUpperCase()}
+                                                        </Badge>
+                                                        {salary.paymentDate && (
+                                                            <p className="text-xs text-muted-foreground mt-1">Paid: {format(new Date(salary.paymentDate), 'dd/MM/yyyy')}</p>
+                                                        )}
+                                                    </div>
                                                 </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {totalSalaryPages > 1 && (
+                                        <div className="flex justify-between items-center mt-4">
+                                            <div className="text-sm text-muted-foreground">
+                                                Showing {((salaryPage - 1) * salaryPageSize) + 1} to {Math.min(salaryPage * salaryPageSize, filteredSalaries.length)} of {filteredSalaries.length}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <Button variant="outline" size="sm" onClick={() => setSalaryPage(p => Math.max(1, p - 1))} disabled={salaryPage === 1}>Previous</Button>
+                                                <span className="px-4 text-sm">Page {salaryPage} of {totalSalaryPages}</span>
+                                                <Button variant="outline" size="sm" onClick={() => setSalaryPage(p => Math.min(totalSalaryPages, p + 1))} disabled={salaryPage === totalSalaryPages}>Next</Button>
                                             </div>
                                         </div>
-                                    ))}
-                                </div>
-                            </div>
+                                    )}
+                                </CardContent>
+                            </Card>
+                        </TabsContent>
+                    )}
+
+                    {/* WAGES TAB - For non-monthly employees */}
+                    {!isMonthlyEmployee && (
+                        <TabsContent value="wages" className="space-y-4">
+                            {/* Employee Info Card */}
+                            <Card>
+            <CardContent className="p-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div>
+                        <p className="text-sm text-muted-foreground">Payment Type</p>
+                        <p className="font-medium capitalize">
+                            {employee?.payment_type === 'contract' ? 'Contractor' : employee?.payment_type}
+                        </p>
+                    </div>
+                    <div>
+                        <p className="text-sm text-muted-foreground">Rate</p>
+                        <p className="font-medium">
+                            {employee?.payment_type === 'contract' && formatPKR(employee?.contract_amount || 0) + ' total'}
+                            {employee?.payment_type === 'fixed' && formatPKR(employee?.salary || 0) + '/month'}
+                            {employee?.payment_type === 'daily' && formatPKR(employee?.daily_rate || 0) + '/day'}
+                            {employee?.payment_type === 'weekly' && formatPKR(employee?.weekly_rate || 0) + '/week'}
+                            {employee?.payment_type === 'hourly' && formatPKR(employee?.hourly_rate || 0) + '/hour'}
+                        </p>
+                        {employee?.payment_type === 'contract' && employee.contract_start_date && employee.contract_end_date && (
+                            <p className="text-xs text-muted-foreground">
+                                {format(new Date(employee.contract_start_date), 'dd/MM/yyyy')} - {format(new Date(employee.contract_end_date), 'dd/MM/yyyy')}
+                            </p>
                         )}
+                    </div>
+                    <div>
+                        <p className="text-sm text-muted-foreground">Total Paid</p>
+                        <p className="font-medium text-green-600">{formatPKR(totalPaidWages)}</p>
+                    </div>
+                    <div>
+                        <p className="text-sm text-muted-foreground">Outstanding Advances</p>
+                        <p className="font-medium text-red-600">{formatPKR(totalAdvances)}</p>
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
 
-                        {/* Employee Info Card */}
-                        <Card>
-                            <CardContent className="p-4">
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                    <div><p className="text-sm text-muted-foreground">Payment Type</p><p className="font-medium capitalize">{employee?.payment_type}</p></div>
-                                    <div><p className="text-sm text-muted-foreground">Rate</p><p className="font-medium">{employee?.payment_type === 'fixed' && formatPKR(employee?.salary || 0) + '/month'}{employee?.payment_type === 'daily' && formatPKR(employee?.daily_rate || 0) + '/day'}{employee?.payment_type === 'weekly' && formatPKR(employee?.weekly_rate || 0) + '/week'}{employee?.payment_type === 'hourly' && formatPKR(employee?.hourly_rate || 0) + '/hour'}{employee?.payment_type === 'contract' && formatPKR(employee?.contract_amount || 0) + ' total'}</p></div>
-                                    <div><p className="text-sm text-muted-foreground">Total Wages Paid</p><p className="font-medium text-green-600">{formatPKR(totalPaidWages)}</p></div>
-                                    <div><p className="text-sm text-muted-foreground">Outstanding Advances</p><p className="font-medium text-red-600">{formatPKR(totalAdvances)}</p></div>
+                            {/* Period Selection */}
+                            <div className="space-y-4">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div><Label>Period Start</Label><Input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} /></div>
+                                    <div><Label>Period End</Label><Input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} /></div>
                                 </div>
-                            </CardContent>
-                        </Card>
 
-                        {/* Period Selection */}
-                        <div className="space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div><Label>Period Start</Label><Input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} /></div>
-                                <div><Label>Period End</Label><Input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} /></div>
+                                {/* Already Paid Dates Summary */}
+                                {paidDates.length > 0 && (
+                                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                                        <p className="text-sm text-blue-700 font-medium mb-2">📅 Already Paid Dates:</p>
+                                        <div className="flex flex-wrap gap-2">
+                                            {paidDates.slice(0, 10).map((date, idx) => (<Badge key={idx} variant="outline" className="bg-blue-100">{format(new Date(date), 'dd/MM/yyyy')}</Badge>))}
+                                            {paidDates.length > 10 && (<Badge variant="outline">+{paidDates.length - 10} more</Badge>)}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Paid Days Warning */}
+                                {(() => {
+                                    const paidDaysInSelected = getPaidDaysInPeriod(periodStart, periodEnd);
+                                    const totalDays = getDaysInPeriod(periodStart, periodEnd);
+                                    if (paidDaysInSelected.length > 0) {
+                                        return (<div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3"><div className="flex items-start gap-2"><AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" /><div><p className="text-sm font-medium text-yellow-800">⚠️ Already Paid: {paidDaysInSelected.length} of {totalDays} days</p><p className="text-xs text-yellow-700 mt-1">Dates: {paidDaysInSelected.map(d => format(new Date(d), 'dd/MM')).join(', ')}</p><p className="text-sm text-green-700 mt-2">✅ Will pay for: {unpaidDaysCount} unpaid day(s)</p></div></div></div>);
+                                    }
+                                    return null;
+                                })()}
+
+                                {/* Period Fully Paid Warning */}
+                                {unpaidDaysCount === 0 && periodStart && periodEnd && (
+                                    <div className="bg-red-50 border border-red-200 rounded-lg p-3"><div className="flex items-start gap-2"><AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" /><div><p className="text-sm font-medium text-red-800">❌ This entire period has already been paid!</p><p className="text-xs text-red-600 mt-1">Select a different date range to make additional payments.</p></div></div></div>
+                                )}
                             </div>
 
-                            {/* Already Paid Dates Summary */}
-                            {paidDates.length > 0 && (
-                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                                    <p className="text-sm text-blue-700 font-medium mb-2">📅 Already Paid Dates:</p>
-                                    <div className="flex flex-wrap gap-2">
-                                        {paidDates.slice(0, 10).map((date, idx) => (<Badge key={idx} variant="outline" className="bg-blue-100">{format(new Date(date), 'dd/MM/yyyy')}</Badge>))}
-                                        {paidDates.length > 10 && (<Badge variant="outline">+{paidDates.length - 10} more</Badge>)}
+                            {/* Calculated Amount Card */}
+                            <Card className="bg-blue-50">
+                                <CardContent className="p-4">
+                                    <div className="flex justify-between items-center">
+                                        <div><p className="text-sm text-muted-foreground">Calculated Wages</p><p className="text-2xl font-bold text-blue-600">{formatPKR(calculatedWage)}</p><p className="text-xs text-muted-foreground">Based on {employee?.payment_type} rate for {unpaidDaysCount} unpaid day(s)</p></div>
+                                        <Button onClick={() => setPaymentAmount(calculatedWage)} variant="outline" disabled={unpaidDaysCount === 0}>Use Calculated Amount</Button>
                                     </div>
-                                </div>
-                            )}
+                                </CardContent>
+                            </Card>
 
-                            {/* Paid Days Warning */}
-                            {(() => {
-                                const paidDaysInSelected = getPaidDaysInPeriod(periodStart, periodEnd);
-                                const totalDays = getDaysInPeriod(periodStart, periodEnd);
-                                if (paidDaysInSelected.length > 0) {
-                                    return (<div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3"><div className="flex items-start gap-2"><AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" /><div><p className="text-sm font-medium text-yellow-800">⚠️ Already Paid: {paidDaysInSelected.length} of {totalDays} days</p><p className="text-xs text-yellow-700 mt-1">Dates: {paidDaysInSelected.map(d => format(new Date(d), 'dd/MM')).join(', ')}</p><p className="text-sm text-green-700 mt-2">✅ Will pay for: {unpaidDaysCount} unpaid day(s)</p></div></div></div>);
-                                }
-                                return null;
-                            })()}
-
-                            {/* Period Fully Paid Warning */}
-                            {unpaidDaysCount === 0 && periodStart && periodEnd && (
-                                <div className="bg-red-50 border border-red-200 rounded-lg p-3"><div className="flex items-start gap-2"><AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" /><div><p className="text-sm font-medium text-red-800">❌ This entire period has already been paid!</p><p className="text-xs text-red-600 mt-1">Select a different date range to make additional payments.</p></div></div></div>
-                            )}
-                        </div>
-
-                        {/* Calculated Amount Card */}
-                        <Card className="bg-blue-50">
-                            <CardContent className="p-4">
-                                <div className="flex justify-between items-center">
-                                    <div><p className="text-sm text-muted-foreground">Calculated Wages</p><p className="text-2xl font-bold text-blue-600">{formatPKR(calculatedWage)}</p><p className="text-xs text-muted-foreground">Based on {employee?.payment_type} rate for {unpaidDaysCount} unpaid day(s)</p></div>
-                                    <Button onClick={() => setPaymentAmount(calculatedWage)} variant="outline" disabled={unpaidDaysCount === 0}>Use Calculated Amount</Button>
-                                </div>
-                            </CardContent>
-                        </Card>
-
-                        {/* Payment Form */}
-                        <div className="space-y-4">
-                            <div><Label>Payment Amount</Label><Input type="number" value={paymentAmount} onChange={(e) => setPaymentAmount(parseFloat(e.target.value) || 0)} placeholder="Enter amount to pay" /></div>
-                            <div><Label>Payment Method</Label><Select value={paymentMethod} onValueChange={setPaymentMethod}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="cash">💵 Cash</SelectItem><SelectItem value="card">💳 Card</SelectItem><SelectItem value="easypaisa">📱 EasyPaisa</SelectItem><SelectItem value="jazzcash">📱 JazzCash</SelectItem><SelectItem value="bank">🏦 Bank Transfer</SelectItem></SelectContent></Select></div>
-                            <div><Label>Notes (Optional)</Label><Textarea value={paymentNotes} onChange={(e) => setPaymentNotes(e.target.value)} placeholder="Add payment notes..." rows={2} /></div>
-                            <Button onClick={handlePayWages} disabled={isSubmitting || paymentAmount <= 0 || unpaidDaysCount === 0} className="w-full">{isSubmitting ? "Processing..." : `Pay ${formatPKR(paymentAmount)} for ${unpaidDaysCount} day(s)`}</Button>
-                        </div>
-                    </TabsContent>
+                            {/* Payment Form */}
+                            <div className="space-y-4">
+                                <div><Label>Payment Amount</Label><Input type="number" value={paymentAmount} onChange={(e) => setPaymentAmount(parseFloat(e.target.value) || 0)} placeholder="Enter amount to pay" /></div>
+                                <div><Label>Payment Method</Label><Select value={paymentMethod} onValueChange={setPaymentMethod}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="cash">💵 Cash</SelectItem><SelectItem value="card">💳 Card</SelectItem><SelectItem value="easypaisa">📱 EasyPaisa</SelectItem><SelectItem value="jazzcash">📱 JazzCash</SelectItem><SelectItem value="bank">🏦 Bank Transfer</SelectItem></SelectContent></Select></div>
+                                <div><Label>Notes (Optional)</Label><Textarea value={paymentNotes} onChange={(e) => setPaymentNotes(e.target.value)} placeholder="Add payment notes..." rows={2} /></div>
+                                <Button onClick={handlePayWages} disabled={isSubmitting || paymentAmount <= 0 || unpaidDaysCount === 0} className="w-full">{isSubmitting ? "Processing..." : `Pay ${formatPKR(paymentAmount)} for ${unpaidDaysCount} day(s)`}</Button>
+                            </div>
+                        </TabsContent>
+                    )}
 
                     {/* Advances Tab */}
                     <TabsContent value="advances" className="space-y-6">
@@ -879,7 +1131,7 @@ export default function EmployeePaymentManager({ employeeId, onClose, onPaymentU
                         {/* Record Repayment Dialog */}
                         <Dialog open={showRecordRepayment} onOpenChange={setShowRecordRepayment}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>💵 Record Repayment</DialogTitle><DialogDescription>Record cash repayment from employee for this advance.</DialogDescription></DialogHeader>{selectedAdvance && (<div className="space-y-4"><div className="bg-green-50 p-4 rounded-lg"><p className="text-sm text-green-800">Outstanding Amount: {formatPKR(selectedAdvance.remaining_amount)}</p><p className="text-xs text-muted-foreground">Reason: {selectedAdvance.reason}</p></div><div><Label>Repayment Amount *</Label><Input type="number" value={repaymentAmount} onChange={(e) => setRepaymentAmount(Math.min(parseFloat(e.target.value) || 0, selectedAdvance.remaining_amount))} max={selectedAdvance.remaining_amount} className="mt-1" /><p className="text-xs text-muted-foreground mt-1">Maximum: {formatPKR(selectedAdvance.remaining_amount)}</p></div><div><Label>Payment Method</Label><Select value={repaymentMethod} onValueChange={setRepaymentMethod}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="cash">💵 Cash</SelectItem><SelectItem value="easypaisa">📱 EasyPaisa</SelectItem><SelectItem value="jazzcash">📱 JazzCash</SelectItem><SelectItem value="bank">🏦 Bank Transfer</SelectItem></SelectContent></Select></div><div><Label>Notes (Optional)</Label><Textarea value={repaymentNotes} onChange={(e) => setRepaymentNotes(e.target.value)} placeholder="Add notes about this repayment..." rows={2} /></div></div>)}<DialogFooter><Button variant="outline" onClick={() => setShowRecordRepayment(false)}>Cancel</Button><Button onClick={handleRecordRepayment} disabled={repaymentAmount <= 0}>Record Repayment of {formatPKR(repaymentAmount)}</Button></DialogFooter></DialogContent></Dialog>
 
-                        {/* Schedule List Dialog */}
+                        {/* Schedule List Dialog - Keep existing code */}
                         <Dialog open={showScheduleList} onOpenChange={setShowScheduleList}><DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto"><DialogHeader><DialogTitle>Salary Deduction Schedule</DialogTitle><DialogDescription>Scheduled deductions from {employee?.name}'s salary</DialogDescription></DialogHeader><div className="space-y-4">{salaryDeductionsData.filter((d: SalaryDeduction) => d.status !== 'cancelled').length === 0 ? (<div className="text-center py-8"><CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-2" /><p>No active deduction schedules</p></div>) : (salaryDeductionsData.filter((d: SalaryDeduction) => d.status !== 'cancelled').map((deduction: SalaryDeduction) => { const isOverdue = deduction.deduction_month && new Date(deduction.deduction_month) < new Date(); const progress = deduction.total_months > 0 ? (deduction.deducted_so_far / deduction.amount) * 100 : (deduction.status === 'completed' ? 100 : 0); return (<div key={deduction.id} className={`border rounded-lg p-4 ${isOverdue ? 'bg-red-50' : 'bg-white'}`}><div className="flex justify-between items-start mb-3"><div><div className="flex items-center gap-2"><p className="font-semibold">{deduction.deduction_type === 'installments' ? `Installment Plan (${deduction.total_months} months)` : 'One-time Deduction'}</p><Badge className={deduction.status === 'completed' ? 'bg-green-500' : isOverdue ? 'bg-red-500' : deduction.status === 'active' ? 'bg-blue-500' : 'bg-yellow-500'}>{deduction.status === 'completed' ? 'Completed' : isOverdue ? 'Overdue' : deduction.status === 'active' ? 'Active' : 'Scheduled'}</Badge></div><p className="text-sm text-muted-foreground mt-1">{deduction.notes || 'No additional notes'}</p></div><div className="flex gap-2"><Button size="sm" variant="ghost" onClick={() => { setEditingSchedule(deduction); setShowEditSchedule(true); }}><Edit className="h-4 w-4" /></Button><Button size="sm" variant="ghost" className="text-red-500" onClick={() => { setSelectedSchedule(deduction); setShowDeleteConfirm(true); }}><Trash2 className="h-4 w-4" /></Button></div></div><div className="grid grid-cols-2 gap-4 text-sm mb-3"><div><p className="text-muted-foreground">Amount</p><p className="font-medium">{formatPKR(deduction.amount)}</p></div>{deduction.deduction_month && (<div><p className="text-muted-foreground">Deduction Month</p><p className={`font-medium ${isOverdue ? 'text-red-600' : ''}`}>{format(new Date(deduction.deduction_month), 'MMMM yyyy')}{isOverdue && ' (Overdue)'}</p></div>)}{deduction.monthly_amount > 0 && (<><div><p className="text-muted-foreground">Monthly Amount</p><p className="font-medium">{formatPKR(deduction.monthly_amount)}</p></div><div><p className="text-muted-foreground">Progress</p><div className="w-full bg-gray-200 rounded-full h-2 mt-1"><div className="bg-green-500 rounded-full h-2 transition-all" style={{ width: `${progress}%` }} /></div><p className="text-xs mt-1">{Math.round(progress)}% completed</p></div></>)}</div>{deduction.status !== 'completed' && deduction.status !== 'cancelled' && (<div className="flex gap-2 pt-3 border-t"><Button size="sm" variant="outline" className="flex-1" onClick={() => { setSelectedSchedule(deduction); setShowMarkAsDeducted(true); }}>Mark as Deducted This Month</Button><Button size="sm" variant="outline" className="flex-1" onClick={() => { setSelectedSchedule(deduction); setShowCancelSchedule(true); }}>Cancel Schedule</Button></div>)}</div>); }))}</div><DialogFooter><Button variant="outline" onClick={() => setShowScheduleList(false)}>Close</Button></DialogFooter></DialogContent></Dialog>
 
                         {/* Edit Schedule Dialog */}
@@ -897,6 +1149,12 @@ export default function EmployeePaymentManager({ employeeId, onClose, onPaymentU
 
                     {/* Payment History Tab */}
                     <TabsContent value="history" className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                            <Card className="bg-green-50"><CardContent className="p-4"><p className="text-sm text-muted-foreground">💰 Total Salaries Paid</p><p className="text-2xl font-bold text-green-600">{formatPKR(totalSalariesPaid)}</p></CardContent></Card>
+                            <Card className="bg-blue-50"><CardContent className="p-4"><p className="text-sm text-muted-foreground">⏰ Total Wages & Extra Work</p><p className="text-2xl font-bold text-blue-600">{formatPKR(totalPaidWages)}</p></CardContent></Card>
+                            <Card className="bg-purple-50"><CardContent className="p-4"><p className="text-sm text-muted-foreground">📊 Total Employee Cost</p><p className="text-2xl font-bold text-purple-600">{formatPKR(totalEmployeeCost)}</p></CardContent></Card>
+                        </div>
+
                         {/* Filters */}
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                             <div className="relative"><Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" /><Input placeholder="Search by notes..." value={paymentHistorySearch} onChange={(e) => { setPaymentHistorySearch(e.target.value); setPaymentHistoryPage(1); }} className="pl-10" /></div>
@@ -905,12 +1163,126 @@ export default function EmployeePaymentManager({ employeeId, onClose, onPaymentU
                             <Input type="date" placeholder="To Date" value={paymentHistoryDateTo} onChange={(e) => { setPaymentHistoryDateTo(e.target.value); setPaymentHistoryPage(1); }} />
                         </div>
                         
+                        {filteredPayments.length === 0 ? (
+                            <div className="text-center py-8"><Banknote className="h-12 w-12 mx-auto mb-2" /><p>No payment records found</p></div>
+                        ) : (
+                            <div className="space-y-3">
+                                {paginatedPayments.map((payment) => {
+                                    let displayDate = "Date not set";
+                                    if (payment.payment_date) {
+                                        try {
+                                            const date = new Date(payment.payment_date);
+                                            if (!isNaN(date.getTime())) {
+                                                displayDate = format(date, 'dd/MM/yyyy');
+                                            }
+                                        } catch (e) {
+                                            displayDate = "Invalid date";
+                                        }
+                                    }
 
-                        {/* Pagination */}
+                                    return (
+                                        <div key={payment.id} className="flex justify-between items-start p-4 border rounded-lg">
+                                            <div>
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <p className="font-medium">
+                                                        {payment.payment_type === 'salary' ? '📅 Monthly Salary' :
+                                                         payment.payment_type === 'daily' ? '📆 Daily Wages' :
+                                                         payment.payment_type === 'weekly' ? '📆 Weekly Wages' :
+                                                         payment.payment_type === 'extra_work' ? '⏰ Extra Work' :
+                                                         payment.payment_type === 'advance_repayment' ? '💰 Advance Repayment' : '💰 Payment'}
+                                                    </p>
+                                                    <Badge className={payment.status === 'paid' || payment.status === 'completed' ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"}>
+                                                        {payment.status?.toUpperCase() || 'COMPLETED'}
+                                                    </Badge>
+                                                </div>
+                                                <p className="text-sm text-muted-foreground mt-1">{payment.description || 'No description'}</p>
+                                                <p className="text-xs text-muted-foreground mt-1">{displayDate} • {payment.payment_method?.toUpperCase() || 'CASH'}</p>
+                                                {payment.notes && <p className="text-xs text-muted-foreground mt-1">Note: {payment.notes}</p>}
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-lg font-bold text-green-600">{formatPKR(payment.amount)}</p>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+
                         {totalPaymentPages > 1 && (<div className="flex items-center justify-between mt-4"><div className="text-sm text-muted-foreground">Showing {((paymentHistoryPage - 1) * itemsPerPage) + 1} to {Math.min(paymentHistoryPage * itemsPerPage, filteredPayments.length)} of {filteredPayments.length} records</div><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setPaymentHistoryPage(p => Math.max(1, p - 1))} disabled={paymentHistoryPage === 1}><ChevronLeft className="h-4 w-4" /> Previous</Button><span className="flex items-center px-4 text-sm">Page {paymentHistoryPage} of {totalPaymentPages}</span><Button variant="outline" size="sm" onClick={() => setPaymentHistoryPage(p => Math.min(totalPaymentPages, p + 1))} disabled={paymentHistoryPage === totalPaymentPages}>Next <ChevronRight className="h-4 w-4" /></Button></div></div>)}
+                    </TabsContent>
 
-                        {/* Edit Extra Work Dialog */}
-                        <Dialog open={showEditExtraWork} onOpenChange={setShowEditExtraWork}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Edit Extra Work</DialogTitle></DialogHeader>{editingExtraWork && (<div className="space-y-4"><div><Label>Date</Label><Input type="date" value={editingExtraWork.payment_date ? editingExtraWork.payment_date.split('T')[0] : ''} onChange={(e) => setEditingExtraWork({ ...editingExtraWork, payment_date: e.target.value })} /></div><div><Label>Amount</Label><Input type="number" value={editingExtraWork.amount || 0} onChange={(e) => setEditingExtraWork({ ...editingExtraWork, amount: parseFloat(e.target.value) || 0 })} /></div><div><Label>Description / Reason</Label><Textarea value={editingExtraWork.description || ''} onChange={(e) => setEditingExtraWork({ ...editingExtraWork, description: e.target.value })} rows={2} /></div></div>)}<DialogFooter><Button variant="outline" onClick={() => setShowEditExtraWork(false)}>Cancel</Button><Button onClick={handleUpdateExtraWork}>Save Changes</Button></DialogFooter></DialogContent></Dialog>
+                    {/* Extra Work Tab */}
+                    <TabsContent value="extrawork" className="space-y-4">
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="text-lg flex items-center gap-2">
+                                    <Clock className="h-5 w-5" />
+                                    Extra Work / Overtime
+                                </CardTitle>
+                                <CardDescription>Record extra hours or additional work beyond regular schedule</CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                    <div>
+                                        <Label>Extra Date</Label>
+                                        <Input type="date" value={extraWorkDate} onChange={(e) => setExtraWorkDate(e.target.value)} />
+                                    </div>
+                                    <div>
+                                        <Label>Extra Hours</Label>
+                                        <Input type="number" step="0.5" value={extraHours} onChange={(e) => setExtraHours(parseFloat(e.target.value) || 0)} placeholder="e.g., 2.5 hours" />
+                                        <p className="text-xs text-muted-foreground mt-1">Rate: {formatPKR(hourlyRate)}/hour</p>
+                                    </div>
+                                    <div>
+                                        <Label>Extra Amount</Label>
+                                        <Input type="number" value={extraAmount} onChange={(e) => setExtraAmount(parseFloat(e.target.value) || 0)} placeholder="Or enter amount directly" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <Label>Reason for Extra Work</Label>
+                                    <Input value={extraWorkReason} onChange={(e) => setExtraWorkReason(e.target.value)} placeholder="e.g., Overtime, Holiday work, Special project" className="mb-3" />
+                                </div>
+                                <div>
+                                    <Label>Payment Method</Label>
+                                    <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="cash">💵 Cash</SelectItem>
+                                            <SelectItem value="card">💳 Card</SelectItem>
+                                            <SelectItem value="easypaisa">📱 EasyPaisa</SelectItem>
+                                            <SelectItem value="jazzcash">📱 JazzCash</SelectItem>
+                                            <SelectItem value="bank">🏦 Bank Transfer</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <Button onClick={handleAddExtraWork} disabled={isSubmitting || (extraHours <= 0 && extraAmount <= 0)} className="w-full mt-4">
+                                    + Add Extra Work for {format(new Date(extraWorkDate), 'dd/MM/yyyy')}
+                                </Button>
+                            </CardContent>
+                        </Card>
+
+                        {/* Recent Extra Work List */}
+                        {extraWorkRecords.length > 0 && (
+                            <div>
+                                <h4 className="font-medium mb-2">Recent Extra Work Records</h4>
+                                <div className="space-y-2">
+                                    {extraWorkRecords.map((record) => (
+                                        <div key={record.id} className="flex justify-between items-center p-3 bg-muted/30 rounded-lg">
+                                            <div>
+                                                <p className="font-medium">{record.description || 'Extra Work'}</p>
+                                                <p className="text-xs text-muted-foreground">{record.payment_date ? format(new Date(record.payment_date), 'dd/MM/yyyy') : 'Date not set'} • {record.hours || '-'} hours</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="font-semibold text-green-600">{formatPKR(record.amount)}</p>
+                                                <div className="flex gap-1 mt-1">
+                                                    <Button size="sm" variant="ghost" onClick={() => handleEditExtraWork(record)}><Edit className="h-3 w-3" /></Button>
+                                                    <Button size="sm" variant="ghost" className="text-red-500" onClick={() => handleDeleteExtraWork(record.id)}><Trash2 className="h-3 w-3" /></Button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </TabsContent>
                 </Tabs>
 
@@ -918,6 +1290,24 @@ export default function EmployeePaymentManager({ employeeId, onClose, onPaymentU
                     <Button variant="outline" onClick={onClose}>Close</Button>
                 </DialogFooter>
             </DialogContent>
+
+            {/* Edit Extra Work Dialog */}
+            <Dialog open={showEditExtraWork} onOpenChange={setShowEditExtraWork}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader><DialogTitle>Edit Extra Work</DialogTitle></DialogHeader>
+                    {editingExtraWork && (
+                        <div className="space-y-4">
+                            <div><Label>Date</Label><Input type="date" value={editingExtraWork.payment_date ? editingExtraWork.payment_date.split('T')[0] : ''} onChange={(e) => setEditingExtraWork({ ...editingExtraWork, payment_date: e.target.value })} /></div>
+                            <div><Label>Amount</Label><Input type="number" value={editingExtraWork.amount || 0} onChange={(e) => setEditingExtraWork({ ...editingExtraWork, amount: parseFloat(e.target.value) || 0 })} /></div>
+                            <div><Label>Description / Reason</Label><Textarea value={editingExtraWork.description || ''} onChange={(e) => setEditingExtraWork({ ...editingExtraWork, description: e.target.value })} rows={2} /></div>
+                        </div>
+                    )}
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowEditExtraWork(false)}>Cancel</Button>
+                        <Button onClick={handleUpdateExtraWork}>Save Changes</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </Dialog>
     );
 }

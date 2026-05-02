@@ -20,7 +20,9 @@ import {
   Package,
   Users,
   FileText,
-  Filter
+  Filter,
+  Clock,
+  Briefcase
 } from "lucide-react";
 import { useHeader } from "@/contexts/HeaderContext";
 import { useToast } from "@/hooks/use-toast";
@@ -40,8 +42,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 
 export default function ProfitDashboard() {
   const [dateRange, setDateRange] = useState({
@@ -58,8 +58,9 @@ export default function ProfitDashboard() {
   
   // Search states
   const [searchSales, setSearchSales] = useState("");
-  const [searchSalaries, setSearchSalaries] = useState("");
+  const [searchWages, setSearchWages] = useState("");
   const [searchExpenses, setSearchExpenses] = useState("");
+  const [wageTypeFilter, setWageTypeFilter] = useState("all");
   
   const { toast } = useToast();
   const { setTitle, setSubtitle } = useHeader();
@@ -78,7 +79,7 @@ export default function ProfitDashboard() {
     try {
       const data = await api.getProfitData(dateRange.startDate, dateRange.endDate);
       setProfitData(data);
-      setCurrentPage(1); // Reset to first page when data changes
+      setCurrentPage(1);
     } catch (error: any) {
       console.error("Error fetching profit data:", error);
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -106,7 +107,20 @@ export default function ProfitDashboard() {
     });
   };
 
-  // Filter and paginate sales data
+  // Filter wages data - includes both salaries and wages
+  const filteredWages = profitData?.allWages?.filter((wage: any) => {
+    const matchesSearch = wage.employee_name?.toLowerCase().includes(searchWages.toLowerCase());
+    const matchesType = wageTypeFilter === "all" || wage.payment_type === wageTypeFilter;
+    return matchesSearch && matchesType;
+  }) || [];
+  
+  const paginatedWages = filteredWages.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+  const totalWagesPages = Math.ceil(filteredWages.length / itemsPerPage);
+
+  // Filter sales data
   const filteredSales = profitData?.sales?.filter((sale: any) => 
     sale.product_name?.toLowerCase().includes(searchSales.toLowerCase())
   ) || [];
@@ -115,22 +129,10 @@ export default function ProfitDashboard() {
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
-  
+  console.log(paginatedWages)
   const totalSalesPages = Math.ceil(filteredSales.length / itemsPerPage);
 
-  // Filter and paginate salaries data
-  const filteredSalaries = profitData?.salaries?.filter((salary: any) => 
-    salary.employee_name?.toLowerCase().includes(searchSalaries.toLowerCase())
-  ) || [];
-  
-  const paginatedSalaries = filteredSalaries.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
-  );
-  
-  const totalSalariesPages = Math.ceil(filteredSalaries.length / itemsPerPage);
-
-  // Filter and paginate expenses data
+  // Filter expenses data
   const filteredExpenses = profitData?.expenses?.filter((expense: any) => 
     expense.title?.toLowerCase().includes(searchExpenses.toLowerCase())
   ) || [];
@@ -139,7 +141,6 @@ export default function ProfitDashboard() {
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
-  
   const totalExpensesPages = Math.ceil(filteredExpenses.length / itemsPerPage);
 
   const handlePageChange = (page: number, total: number) => {
@@ -157,11 +158,41 @@ export default function ProfitDashboard() {
     );
   }
 
-  const getTotalPages = () => {
-    if (activeTab === "sales") return totalSalesPages;
-    if (activeTab === "salaries") return totalSalariesPages;
-    return totalExpensesPages;
+  // Get wage type label with proper display
+  const getWageTypeLabel = (type: string) => {
+    switch(type) {
+      case 'salary': return '📅 Monthly Salary';
+      case 'monthly': return '📅 Monthly Salary';
+      case 'daily': return '📆 Daily Wages';
+      case 'weekly': return '📆 Weekly Wages';
+      case 'hourly': return '⏰ Hourly Rate';
+      case 'contract': return '📄 Contract Payment';
+      case 'extra_work': return '⚡ Extra Work / Overtime';
+      default: return type || 'Other';
+    }
   };
+
+  // Get badge for wage type
+  // In profit-dashboard.tsx, update the getWageBadge function:
+const getWageBadge = (type: string) => {
+    switch(type) {
+        case 'salary': return <Badge variant="outline" className="bg-blue-100 text-blue-800">📅 Monthly Salary</Badge>;
+        case 'monthly': return <Badge variant="outline" className="bg-blue-100 text-blue-800">📅 Monthly Salary</Badge>;
+        case 'contract': return <Badge variant="outline" className="bg-purple-100 text-purple-800">📄 Contract Payment</Badge>;
+        case 'daily': return <Badge variant="outline" className="bg-green-100 text-green-800">📆 Daily Wages</Badge>;
+        case 'weekly': return <Badge variant="outline" className="bg-teal-100 text-teal-800">📆 Weekly Wages</Badge>;
+        case 'hourly': return <Badge variant="outline" className="bg-orange-100 text-orange-800">⏰ Hourly Rate</Badge>;
+        case 'extra_work': return <Badge variant="outline" className="bg-pink-100 text-pink-800">⚡ Extra Work</Badge>;
+        default: return <Badge variant="outline">{type || 'Other'}</Badge>;
+    }
+};
+
+  // Calculate total wages (excluding monthly salaries)
+  const totalWagesOnly = (profitData?.wageBreakdown?.daily || 0) + 
+                         (profitData?.wageBreakdown?.weekly || 0) + 
+                         (profitData?.wageBreakdown?.hourly || 0) + 
+                         (profitData?.wageBreakdown?.contract || 0) + 
+                         (profitData?.wageBreakdown?.extraWork || 0);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-950">
@@ -188,108 +219,74 @@ export default function ProfitDashboard() {
           <Button variant="outline" size="sm" onClick={() => applyQuickFilter(7)}>Last 7 Days</Button>
           <Button variant="outline" size="sm" onClick={() => applyQuickFilter(30)}>Last 30 Days</Button>
           <Button variant="outline" size="sm" onClick={() => applyQuickFilter(90)}>Last 90 Days</Button>
-          <Button variant="outline" size="sm" onClick={() => applyYearFilter(new Date().getFullYear())}>
-            Current Year
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => applyYearFilter(new Date().getFullYear() - 1)}>
-            Last Year
-          </Button>
+          <Button variant="outline" size="sm" onClick={() => applyYearFilter(new Date().getFullYear())}>Current Year</Button>
+          <Button variant="outline" size="sm" onClick={() => applyYearFilter(new Date().getFullYear() - 1)}>Last Year</Button>
         </div>
 
         {/* Date Range Picker */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
           <div>
             <label className="text-sm font-medium mb-1 block">Start Date</label>
-            <Input
-              type="date"
-              value={dateRange.startDate}
-              onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
-              className="w-full"
-            />
+            <Input type="date" value={dateRange.startDate} onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })} className="w-full" />
           </div>
           <div>
             <label className="text-sm font-medium mb-1 block">End Date</label>
-            <Input
-              type="date"
-              value={dateRange.endDate}
-              onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
-              className="w-full"
-            />
+            <Input type="date" value={dateRange.endDate} onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })} className="w-full" />
           </div>
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <Card className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950 dark:to-green-900 border-l-4 border-l-green-500 shadow-lg hover:shadow-xl transition-shadow">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+          <Card className="bg-gradient-to-br from-green-50 to-green-100 border-l-4 border-l-green-500 shadow-lg">
             <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Total Sales</p>
-                  <p className="text-2xl lg:text-3xl font-bold text-green-600 dark:text-green-400">
-                    {formatPKR(profitData.summary.totalSales)}
-                  </p>
-                </div>
-               
-              </div>
+              <p className="text-sm font-medium text-muted-foreground">Total Sales</p>
+              <p className="text-2xl lg:text-3xl font-bold text-green-600">{formatPKR(profitData.summary.totalSales)}</p>
             </CardContent>
           </Card>
 
-          <Card className="bg-gradient-to-br from-red-50 to-red-100 dark:from-red-950 dark:to-red-900 border-l-4 border-l-red-500 shadow-lg hover:shadow-xl transition-shadow">
+          <Card className="bg-gradient-to-br from-red-50 to-red-100 border-l-4 border-l-red-500 shadow-lg">
             <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">COGS</p>
-                  <p className="text-2xl lg:text-3xl font-bold text-red-600 dark:text-red-400">
-                    {formatPKR(profitData.summary.totalCOGS)}
-                  </p>
-                </div>
-                
-              </div>
+              <p className="text-sm font-medium text-muted-foreground">COGS</p>
+              <p className="text-2xl lg:text-3xl font-bold text-red-600">{formatPKR(profitData.summary.totalCOGS)}</p>
             </CardContent>
           </Card>
 
-          <Card className="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-950 dark:to-orange-900 border-l-4 border-l-orange-500 shadow-lg hover:shadow-xl transition-shadow">
+          <Card className="bg-gradient-to-br from-orange-50 to-orange-100 border-l-4 border-l-orange-500 shadow-lg">
             <CardContent className="p-6">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Expenses + Salaries</p>
-                <p className="text-2xl lg:text-3xl font-bold text-orange-600 dark:text-orange-400">
-                  {formatPKR(profitData.summary.totalExpenses + profitData.summary.totalSalaries)}
-                </p>
-              </div>
+              <p className="text-sm font-medium text-muted-foreground">Salaries & Wages</p>
+              <p className="text-2xl lg:text-3xl font-bold text-orange-600">
+                {formatPKR((profitData.summary.totalSalaries || 0) + (profitData.summary.totalWages || 0))}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Salaries: {formatPKR(profitData.summary.totalSalaries || 0)} | 
+                Wages: {formatPKR(profitData.summary.totalWages || 0)}
+              </p>
             </CardContent>
           </Card>
 
-          <Card className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950 dark:to-blue-900 border-l-4 border-l-blue-500 shadow-lg hover:shadow-xl transition-shadow">
+          <Card className="bg-gradient-to-br from-purple-50 to-purple-100 border-l-4 border-l-purple-500 shadow-lg">
             <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Net Profit</p>
-                  <p className={`text-2xl lg:text-3xl font-bold ${profitData.summary.netProfit >= 0 ? 'text-blue-600 dark:text-blue-400' : 'text-red-600 dark:text-red-400'}`}>
-                    {formatPKR(profitData.summary.netProfit)}
-                  </p>
-                </div>
-              </div>
+              <p className="text-sm font-medium text-muted-foreground">Expenses</p>
+              <p className="text-2xl lg:text-3xl font-bold text-purple-600">{formatPKR(profitData.summary.totalExpenses)}</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-l-4 border-l-blue-500 shadow-lg">
+            <CardContent className="p-6">
+              <p className="text-sm font-medium text-muted-foreground">Net Profit</p>
+              <p className={`text-2xl lg:text-3xl font-bold ${profitData.summary.netProfit >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                {formatPKR(profitData.summary.netProfit)}
+              </p>
             </CardContent>
           </Card>
         </div>
 
         {/* Detailed Tables */}
-        <Tabs defaultValue="sales" className="w-full" onValueChange={(value) => {
-          setActiveTab(value);
-          setCurrentPage(1);
-        }}>
+        <Tabs defaultValue="sales" className="w-full" onValueChange={(value) => { setActiveTab(value); setCurrentPage(1); }}>
           <TabsList className="grid w-full grid-cols-3 mb-6">
-            <TabsTrigger value="sales" className="flex items-center gap-2">
-              Sales & Profit
-            </TabsTrigger>
-            <TabsTrigger value="salaries" className="flex items-center gap-2">
-              <Users className="h-4 w-4" />
-              Salaries
-            </TabsTrigger>
-            <TabsTrigger value="expenses" className="flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Expenses
-            </TabsTrigger>
+            <TabsTrigger value="sales" className="flex items-center gap-2">📊 Sales & Profit</TabsTrigger>
+            <TabsTrigger value="wages" className="flex items-center gap-2"><Users className="h-4 w-4" /> Salaries & Wages</TabsTrigger>
+            <TabsTrigger value="expenses" className="flex items-center gap-2"><FileText className="h-4 w-4" /> Expenses</TabsTrigger>
           </TabsList>
 
           {/* Sales Tab */}
@@ -300,15 +297,7 @@ export default function ProfitDashboard() {
                   <CardTitle className="text-xl">Sales Breakdown</CardTitle>
                   <div className="relative w-full lg:w-96">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search by product name..."
-                      value={searchSales}
-                      onChange={(e) => {
-                        setSearchSales(e.target.value);
-                        setCurrentPage(1);
-                      }}
-                      className="pl-10"
-                    />
+                    <Input placeholder="Search by product name..." value={searchSales} onChange={(e) => { setSearchSales(e.target.value); setCurrentPage(1); }} className="pl-10" />
                   </div>
                 </div>
               </CardHeader>
@@ -327,14 +316,10 @@ export default function ProfitDashboard() {
                     </TableHeader>
                     <TableBody>
                       {paginatedSales.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={6} className="text-center text-muted-foreground">
-                            No sales found
-                          </TableCell>
-                        </TableRow>
+                        <TableRow><TableCell colSpan={6} className="text-center">No sales found</TableCell></TableRow>
                       ) : (
                         paginatedSales.map((sale: any) => (
-                          <TableRow key={sale.id} className="hover:bg-muted/50">
+                          <TableRow key={sale.id}>
                             <TableCell className="font-medium">{sale.product_name}</TableCell>
                             <TableCell className="text-center">{sale.quantity}</TableCell>
                             <TableCell className="text-right">{formatPKR(sale.unit_price)}</TableCell>
@@ -347,49 +332,15 @@ export default function ProfitDashboard() {
                     </TableBody>
                   </Table>
                 </div>
-
-                {/* Pagination for Sales */}
                 {totalSalesPages > 1 && (
                   <div className="flex items-center justify-between mt-4">
-                    <div className="text-sm text-muted-foreground">
-                      Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredSales.length)} of {filteredSales.length} sales
-                    </div>
+                    <div className="text-sm text-muted-foreground">Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredSales.length)} of {filteredSales.length} sales</div>
                     <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(1, totalSalesPages)}
-                        disabled={currentPage === 1}
-                      >
-                        <ChevronsLeft className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(currentPage - 1, totalSalesPages)}
-                        disabled={currentPage === 1}
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <span className="flex items-center px-4 text-sm">
-                        Page {currentPage} of {totalSalesPages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(currentPage + 1, totalSalesPages)}
-                        disabled={currentPage === totalSalesPages}
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(totalSalesPages, totalSalesPages)}
-                        disabled={currentPage === totalSalesPages}
-                      >
-                        <ChevronsRight className="h-4 w-4" />
-                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(1, totalSalesPages)} disabled={currentPage === 1}><ChevronsLeft className="h-4 w-4" /></Button>
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(currentPage - 1, totalSalesPages)} disabled={currentPage === 1}><ChevronLeft className="h-4 w-4" /></Button>
+                      <span className="flex items-center px-4 text-sm">Page {currentPage} of {totalSalesPages}</span>
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(currentPage + 1, totalSalesPages)} disabled={currentPage === totalSalesPages}><ChevronRight className="h-4 w-4" /></Button>
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(totalSalesPages, totalSalesPages)} disabled={currentPage === totalSalesPages}><ChevronsRight className="h-4 w-4" /></Button>
                     </div>
                   </div>
                 )}
@@ -397,62 +348,128 @@ export default function ProfitDashboard() {
             </Card>
           </TabsContent>
 
-          {/* Salaries Tab */}
-          <TabsContent value="salaries">
+          {/* Salaries & Wages Tab - Complete with ALL payment types */}
+          <TabsContent value="wages">
             <Card className="shadow-lg">
               <CardHeader>
                 <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                   <div>
-                    <CardTitle className="text-xl">Salaries Paid</CardTitle>
+                    <CardTitle className="text-xl">Salaries & Wages</CardTitle>
                     <p className="text-sm text-muted-foreground mt-1">
-                      Salaries are spread across month days. Only the days within selected period are counted.
+                      Includes monthly salaries, daily/weekly wages, hourly rates, contract payments, and extra work/overtime.
                     </p>
                   </div>
-                  <div className="relative w-full lg:w-96">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search by employee name..."
-                      value={searchSalaries}
-                      onChange={(e) => {
-                        setSearchSalaries(e.target.value);
-                        setCurrentPage(1);
-                      }}
-                      className="pl-10"
-                    />
+                  <div className="flex gap-2">
+                    <Select value={wageTypeFilter} onValueChange={setWageTypeFilter}>
+                      <SelectTrigger className="w-40"><SelectValue placeholder="Filter by type" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Types</SelectItem>
+                        <SelectItem value="salary">Monthly Salary</SelectItem>
+                        <SelectItem value="monthly">Monthly Salary</SelectItem>
+                        <SelectItem value="daily">Daily Wages</SelectItem>
+                        <SelectItem value="weekly">Weekly Wages</SelectItem>
+                        <SelectItem value="hourly">Hourly Rate</SelectItem>
+                        <SelectItem value="contract">Contract</SelectItem>
+                        <SelectItem value="extra_work">Extra Work</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <div className="relative w-64">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input placeholder="Search by employee..." value={searchWages} onChange={(e) => { setSearchWages(e.target.value); setCurrentPage(1); }} className="pl-10" />
+                    </div>
                   </div>
                 </div>
               </CardHeader>
               <CardContent>
+                {/* Summary by Type - Expanded */}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+                  <Card className="bg-blue-50">
+                    <CardContent className="p-3">
+                      <p className="text-xs text-muted-foreground">Monthly Salary</p>
+                      <p className="text-lg font-bold text-blue-600">{formatPKR(profitData?.wageBreakdown?.monthly || 0)}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-green-50">
+                    <CardContent className="p-3">
+                      <p className="text-xs text-muted-foreground">Daily Wages</p>
+                      <p className="text-lg font-bold text-green-600">{formatPKR(profitData?.wageBreakdown?.daily || 0)}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-teal-50">
+                    <CardContent className="p-3">
+                      <p className="text-xs text-muted-foreground">Weekly Wages</p>
+                      <p className="text-lg font-bold text-teal-600">{formatPKR(profitData?.wageBreakdown?.weekly || 0)}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-purple-50">
+                    <CardContent className="p-3">
+                      <p className="text-xs text-muted-foreground">Hourly Rate</p>
+                      <p className="text-lg font-bold text-purple-600">{formatPKR(profitData?.wageBreakdown?.hourly || 0)}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-orange-50">
+                    <CardContent className="p-3">
+                      <p className="text-xs text-muted-foreground">Contract</p>
+                      <p className="text-lg font-bold text-orange-600">{formatPKR(profitData?.wageBreakdown?.contract || 0)}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-pink-50">
+                    <CardContent className="p-3">
+                      <p className="text-xs text-muted-foreground">Extra Work</p>
+                      <p className="text-lg font-bold text-pink-600">{formatPKR(profitData?.wageBreakdown?.extraWork || 0)}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Salaries vs Wages Breakdown */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 p-4 bg-gray-50 rounded-lg">
+                  <div className="text-center p-3 bg-blue-100 rounded-lg">
+                    <p className="text-sm font-medium text-blue-800">💰 Total Monthly Salaries</p>
+                    <p className="text-2xl font-bold text-blue-600">{formatPKR(profitData?.summary?.totalSalaries || 0)}</p>
+                    <p className="text-xs text-muted-foreground">Fixed monthly salary payments</p>
+                  </div>
+                  <div className="text-center p-3 bg-green-100 rounded-lg">
+                    <p className="text-sm font-medium text-green-800">⏰ Total Variable Wages</p>
+                    <p className="text-2xl font-bold text-green-600">{formatPKR(totalWagesOnly)}</p>
+                    <p className="text-xs text-muted-foreground">Includes daily, weekly, hourly, contract, and extra work</p>
+                  </div>
+                </div>
+
+                {/* Wages Table */}
                 <div className="rounded-md border overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Employee</TableHead>
-                        <TableHead className="text-right">Net Salary</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                        <TableHead>Period / Details</TableHead>
                         <TableHead>Payment Date</TableHead>
-                        <TableHead>Note</TableHead>
-                        <TableHead>Status</TableHead>
+                        <TableHead>Method</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {paginatedSalaries.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={5} className="text-center text-muted-foreground">
-                            No salaries found
-                          </TableCell>
-                        </TableRow>
+                      {paginatedWages.length === 0 ? (
+                        <TableRow><TableCell colSpan={6} className="text-center">No records found</TableCell></TableRow>
                       ) : (
-                        paginatedSalaries.map((salary: any) => (
-                          <TableRow key={salary.id} className="hover:bg-muted/50">
-                            <TableCell className="font-medium">{salary.employee_name}</TableCell>
-                            <TableCell className="text-right font-semibold">{formatPKR(salary.net_salary)}</TableCell>
-                            <TableCell>{format(new Date(salary.payment_date), 'dd/MM/yyyy')}</TableCell>
-                            <TableCell className="text-muted-foreground">{salary.note || '-'}</TableCell>
-                            <TableCell>
-                              <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">
-                                Paid
-                              </Badge>
+                        paginatedWages.map((wage: any) => (
+                          <TableRow key={wage.id}>
+                            <TableCell className="font-medium">{wage.employee_name}</TableCell>
+                            <TableCell>{getWageBadge(wage.payment_type)}</TableCell>
+                            <TableCell className="text-right font-semibold text-green-600">{formatPKR(wage.amount)}</TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {wage.payment_type === 'salary' && wage.month && `Month: ${wage.month}/${wage.year}`}
+                              {wage.payment_type === 'monthly' && wage.month && `Month: ${wage.month}/${wage.year}`}
+                              {wage.payment_type === 'daily' && wage.period_start && `Day: ${format(new Date(wage.period_start), 'dd/MM/yyyy')}`}
+                              {wage.payment_type === 'weekly' && wage.period_start && wage.period_end && `Week: ${format(new Date(wage.period_start), 'dd/MM')} - ${format(new Date(wage.period_end), 'dd/MM/yyyy')}`}
+                              {wage.payment_type === 'hourly' && `${wage.hours || 0} hours @ ${formatPKR(wage.hourly_rate || 0)}/hr`}
+                              {wage.payment_type === 'contract' && wage.period_start && wage.period_end && `Contract: ${format(new Date(wage.period_start), 'dd/MM')} - ${format(new Date(wage.period_end), 'dd/MM/yyyy')}`}
+                              {wage.payment_type === 'extra_work' && wage.description}
+                              {wage.payment_type === 'salary' && !wage.month && wage.description && wage.description}
+                              {!wage.period_start && wage.description && !wage.payment_type?.includes('salary') && wage.description}
                             </TableCell>
+                            <TableCell>{format(new Date(wage.payment_date), 'dd/MM/yyyy')}</TableCell>
+                            <TableCell className="capitalize">{wage.payment_method}</TableCell>
                           </TableRow>
                         ))
                       )}
@@ -460,48 +477,22 @@ export default function ProfitDashboard() {
                   </Table>
                 </div>
 
-                {/* Pagination for Salaries */}
-                {totalSalariesPages > 1 && (
+                {/* Daily Average Wage Calculation */}
+                <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+                  <p className="text-sm font-semibold flex items-center gap-2"><Clock className="h-4 w-4" /> Daily Average Employee Cost</p>
+                  <p className="text-2xl font-bold text-blue-600 mt-1">{formatPKR(profitData?.summary?.dailyAverageWage || 0)}<span className="text-sm font-normal text-muted-foreground"> per day</span></p>
+                  <p className="text-xs text-muted-foreground mt-1">Total employee cost (salaries + wages) divided by {profitData?.period?.days || 0} days in period</p>
+                </div>
+
+                {totalWagesPages > 1 && (
                   <div className="flex items-center justify-between mt-4">
-                    <div className="text-sm text-muted-foreground">
-                      Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredSalaries.length)} of {filteredSalaries.length} salaries
-                    </div>
+                    <div className="text-sm text-muted-foreground">Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredWages.length)} of {filteredWages.length} records</div>
                     <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(1, totalSalariesPages)}
-                        disabled={currentPage === 1}
-                      >
-                        <ChevronsLeft className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(currentPage - 1, totalSalariesPages)}
-                        disabled={currentPage === 1}
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <span className="flex items-center px-4 text-sm">
-                        Page {currentPage} of {totalSalariesPages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(currentPage + 1, totalSalariesPages)}
-                        disabled={currentPage === totalSalariesPages}
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(totalSalariesPages, totalSalariesPages)}
-                        disabled={currentPage === totalSalariesPages}
-                      >
-                        <ChevronsRight className="h-4 w-4" />
-                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(1, totalWagesPages)} disabled={currentPage === 1}><ChevronsLeft className="h-4 w-4" /></Button>
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(currentPage - 1, totalWagesPages)} disabled={currentPage === 1}><ChevronLeft className="h-4 w-4" /></Button>
+                      <span className="flex items-center px-4 text-sm">Page {currentPage} of {totalWagesPages}</span>
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(currentPage + 1, totalWagesPages)} disabled={currentPage === totalWagesPages}><ChevronRight className="h-4 w-4" /></Button>
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(totalWagesPages, totalWagesPages)} disabled={currentPage === totalWagesPages}><ChevronsRight className="h-4 w-4" /></Button>
                     </div>
                   </div>
                 )}
@@ -516,21 +507,11 @@ export default function ProfitDashboard() {
                 <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                   <div>
                     <CardTitle className="text-xl">Expenses</CardTitle>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Recurring expenses are spread across days. Daily cost shown for recurring items.
-                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">Recurring expenses are spread across days. Daily cost shown for recurring items.</p>
                   </div>
                   <div className="relative w-full lg:w-96">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search by expense title..."
-                      value={searchExpenses}
-                      onChange={(e) => {
-                        setSearchExpenses(e.target.value);
-                        setCurrentPage(1);
-                      }}
-                      className="pl-10"
-                    />
+                    <Input placeholder="Search by expense title..." value={searchExpenses} onChange={(e) => { setSearchExpenses(e.target.value); setCurrentPage(1); }} className="pl-10" />
                   </div>
                 </div>
               </CardHeader>
@@ -549,25 +530,15 @@ export default function ProfitDashboard() {
                     </TableHeader>
                     <TableBody>
                       {paginatedExpenses.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={6} className="text-center text-muted-foreground">
-                            No expenses found
-                          </TableCell>
-                        </TableRow>
+                        <TableRow><TableCell colSpan={6} className="text-center">No expenses found</TableCell></TableRow>
                       ) : (
                         paginatedExpenses.map((expense: any) => (
-                          <TableRow key={expense.id} className="hover:bg-muted/50">
+                          <TableRow key={expense.id}>
                             <TableCell className="font-medium">{expense.title}</TableCell>
-                            <TableCell>
-                              <Badge variant="outline">{expense.category}</Badge>
-                            </TableCell>
-                            <TableCell className="text-right text-red-600 font-semibold">
-                              {formatPKR(expense.amount)}
-                            </TableCell>
+                            <TableCell><Badge variant="outline">{expense.category}</Badge></TableCell>
+                            <TableCell className="text-right text-red-600 font-semibold">{formatPKR(expense.amount)}</TableCell>
                             <TableCell className="capitalize">{expense.frequency || 'one-time'}</TableCell>
-                            <TableCell>
-                              {expense.is_recurring ? formatPKR(expense.daily_cost) + '/day' : '-'}
-                            </TableCell>
+                            <TableCell>{expense.is_recurring ? formatPKR(expense.daily_cost) + '/day' : '-'}</TableCell>
                             <TableCell>{format(new Date(expense.created_at), 'dd/MM/yyyy')}</TableCell>
                           </TableRow>
                         ))
@@ -575,49 +546,15 @@ export default function ProfitDashboard() {
                     </TableBody>
                   </Table>
                 </div>
-
-                {/* Pagination for Expenses */}
                 {totalExpensesPages > 1 && (
                   <div className="flex items-center justify-between mt-4">
-                    <div className="text-sm text-muted-foreground">
-                      Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredExpenses.length)} of {filteredExpenses.length} expenses
-                    </div>
+                    <div className="text-sm text-muted-foreground">Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredExpenses.length)} of {filteredExpenses.length} expenses</div>
                     <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(1, totalExpensesPages)}
-                        disabled={currentPage === 1}
-                      >
-                        <ChevronsLeft className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(currentPage - 1, totalExpensesPages)}
-                        disabled={currentPage === 1}
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <span className="flex items-center px-4 text-sm">
-                        Page {currentPage} of {totalExpensesPages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(currentPage + 1, totalExpensesPages)}
-                        disabled={currentPage === totalExpensesPages}
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(totalExpensesPages, totalExpensesPages)}
-                        disabled={currentPage === totalExpensesPages}
-                      >
-                        <ChevronsRight className="h-4 w-4" />
-                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(1, totalExpensesPages)} disabled={currentPage === 1}><ChevronsLeft className="h-4 w-4" /></Button>
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(currentPage - 1, totalExpensesPages)} disabled={currentPage === 1}><ChevronLeft className="h-4 w-4" /></Button>
+                      <span className="flex items-center px-4 text-sm">Page {currentPage} of {totalExpensesPages}</span>
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(currentPage + 1, totalExpensesPages)} disabled={currentPage === totalExpensesPages}><ChevronRight className="h-4 w-4" /></Button>
+                      <Button variant="outline" size="sm" onClick={() => handlePageChange(totalExpensesPages, totalExpensesPages)} disabled={currentPage === totalExpensesPages}><ChevronsRight className="h-4 w-4" /></Button>
                     </div>
                   </div>
                 )}
@@ -626,8 +563,8 @@ export default function ProfitDashboard() {
           </TabsContent>
         </Tabs>
 
-        {/* Enhanced Profit Calculation Summary */}
-        <Card className="mt-8 shadow-xl bg-gradient-to-br from-white to-gray-50 dark:from-gray-900 dark:to-gray-950 border-t-4 border-t-blue-500">
+        {/* Profit Calculation Summary */}
+        <Card className="mt-8 shadow-xl bg-gradient-to-br from-white to-gray-50 border-t-4 border-t-blue-500">
           <CardHeader className="pb-2">
             <CardTitle className="text-xl lg:text-2xl flex items-center gap-2">
               <TrendingUp className="h-6 w-6 text-blue-600" />
@@ -636,78 +573,99 @@ export default function ProfitDashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {/* Sales Row */}
               <div className="flex justify-between items-center py-2 border-b">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">Total Sales</span>
-                </div>
+                <span className="font-medium">Total Sales</span>
                 <span className="text-lg font-semibold text-green-600">{formatPKR(profitData.summary.totalSales)}</span>
               </div>
-
-              {/* COGS Row */}
               <div className="flex justify-between items-center py-2 border-b">
-                <div className="flex items-center gap-2">
-                  <div className="h-8 w-8 bg-red-100 dark:bg-red-900 rounded-full flex items-center justify-center">
-                    <Package className="h-4 w-4 text-red-600" />
-                  </div>
-                  <span className="font-medium">Less: Cost of Goods Sold (COGS)</span>
-                </div>
+                <span className="font-medium">Less: Cost of Goods Sold (COGS)</span>
                 <span className="text-lg text-red-600">-{formatPKR(profitData.summary.totalCOGS)}</span>
               </div>
-
-              {/* Gross Profit Row - Highlighted */}
-              <div className="flex justify-between items-center py-3 border-b-2 border-gray-200 dark:border-gray-700 bg-gradient-to-r from-blue-50 to-transparent dark:from-blue-950/30 -mx-4 px-4 rounded-lg">
+              <div className="flex justify-between items-center py-3 border-b-2 bg-gradient-to-r from-blue-50 to-transparent -mx-4 px-4 rounded-lg">
                 <span className="font-bold text-base">Gross Profit</span>
                 <span className="text-xl font-bold text-green-600">{formatPKR(profitData.summary.grossProfit)}</span>
               </div>
-
-              {/* Salaries Row */}
+              
               <div className="flex justify-between items-center py-2 border-b">
-                <div className="flex items-center gap-2">
-                  <div className="h-8 w-8 bg-orange-100 dark:bg-orange-900 rounded-full flex items-center justify-center">
-                    <Users className="h-4 w-4 text-orange-600" />
-                  </div>
-                  <span className="font-medium">Less: Salaries (spread over {profitData.period?.days || 0} days)</span>
-                </div>
+                <span className="font-medium">Less: Monthly Salaries</span>
                 <span className="text-lg text-orange-600">-{formatPKR(profitData.summary.totalSalaries)}</span>
               </div>
-
-              {/* Expenses Row */}
               <div className="flex justify-between items-center py-2 border-b">
-                <div className="flex items-center gap-2">
-                  <div className="h-8 w-8 bg-purple-100 dark:bg-purple-900 rounded-full flex items-center justify-center">
-                    <FileText className="h-4 w-4 text-purple-600" />
-                  </div>
-                  <span className="font-medium">Less: Operating Expenses (recurring spread)</span>
-                </div>
+                <span className="font-medium">Less: Daily Wages</span>
+                <span className="text-lg text-orange-600">-{formatPKR(profitData.wageBreakdown?.daily || 0)}</span>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b">
+                <span className="font-medium">Less: Weekly Wages</span>
+                <span className="text-lg text-orange-600">-{formatPKR(profitData.wageBreakdown?.weekly || 0)}</span>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b">
+                <span className="font-medium">Less: Hourly Payments</span>
+                <span className="text-lg text-orange-600">-{formatPKR(profitData.wageBreakdown?.hourly || 0)}</span>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b">
+                <span className="font-medium">Less: Contract Payments</span>
+                <span className="text-lg text-orange-600">-{formatPKR(profitData.wageBreakdown?.contract || 0)}</span>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b">
+                <span className="font-medium">Less: Extra Work / Overtime</span>
+                <span className="text-lg text-orange-600">-{formatPKR(profitData.wageBreakdown?.extraWork || 0)}</span>
+              </div>
+              
+              <div className="flex justify-between items-center py-2 border-b">
+                <span className="font-medium">Less: Operating Expenses</span>
                 <span className="text-lg text-purple-600">-{formatPKR(profitData.summary.totalExpenses)}</span>
               </div>
-
-              {/* Net Profit Row - Highlighted */}
-              <div className="flex justify-between items-center py-4 mt-2 bg-gradient-to-r from-gray-100 to-transparent dark:from-gray-800 -mx-4 px-4 rounded-lg">
+              
+              <div className="flex justify-between items-center py-4 mt-2 bg-gradient-to-r from-gray-100 to-transparent -mx-4 px-4 rounded-lg">
                 <div>
                   <span className="text-base font-bold">Net Profit</span>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    for {format(new Date(profitData.period?.startDate), 'dd MMM')} - {format(new Date(profitData.period?.endDate), 'dd MMM yyyy')}
-                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">for {format(new Date(profitData.period?.startDate), 'dd MMM')} - {format(new Date(profitData.period?.endDate), 'dd MMM yyyy')}</p>
                 </div>
                 <span className={`text-2xl font-bold ${profitData.summary.netProfit >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
                   {formatPKR(profitData.summary.netProfit)}
                 </span>
               </div>
 
-              {/* Info Box */}
-              <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
+              {/* Daily Average Calculation */}
+              <div className="mt-4 p-4 bg-green-50 rounded-lg border border-green-200">
+                <p className="text-sm font-semibold">📊 Daily Averages for Selected Period ({profitData?.period?.days || 0} days)</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Daily Sales Avg</p>
+                    <p className="text-lg font-bold text-green-600">{formatPKR(profitData.summary.totalSales / (profitData?.period?.days || 1))}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Daily COGS Avg</p>
+                    <p className="text-lg font-bold text-red-600">{formatPKR(profitData.summary.totalCOGS / (profitData?.period?.days || 1))}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Daily Salary Expense</p>
+                    <p className="text-lg font-bold text-orange-600">{formatPKR((profitData.summary.totalSalaries) / (profitData?.period?.days || 1))}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Daily Wage Expense</p>
+                    <p className="text-lg font-bold text-orange-600">{formatPKR((profitData.summary.totalWages) / (profitData?.period?.days || 1))}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Daily Net Profit</p>
+                    <p className="text-lg font-bold text-blue-600">{formatPKR(profitData.summary.netProfit / (profitData?.period?.days || 1))}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
                 <div className="flex items-start gap-3">
-                  <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center flex-shrink-0">
+                  <div className="h-8 w-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
                     <span className="text-blue-600 text-lg">📌</span>
                   </div>
                   <div className="text-xs text-muted-foreground space-y-1">
-                    <p className="font-semibold text-blue-800 dark:text-blue-300">How it's calculated:</p>
-                    <p>• Monthly salaries are divided by days in that month, then multiplied by days in selected period</p>
-                    <p>• Recurring expenses (monthly, weekly, yearly) are spread across days</p>
-                    <p>• One-time expenses are counted fully on their date</p>
-                    <p>• Sales profit is calculated at transaction time (selling price - cost price)</p>
+                    <p className="font-semibold text-blue-800">How employee costs are calculated:</p>
+                    <p>• Monthly salaries: Full salary amount for the month (counted once per month)</p>
+                    <p>• Daily wages: Counted fully for each day worked in selected period</p>
+                    <p>• Weekly wages: Divided by 7 days, multiplied by days in selected period</p>
+                    <p>• Hourly rates: Calculated based on hours worked × hourly rate</p>
+                    <p>• Contract payments: Spread across contract duration days</p>
+                    <p>• Extra work: Counted fully on payment date</p>
                   </div>
                 </div>
               </div>
