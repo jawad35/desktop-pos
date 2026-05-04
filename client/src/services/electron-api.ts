@@ -17,6 +17,12 @@ type ElectronAPI = {
         notes?: string;
         payment_date: string;
     }) => Promise<any>;
+    updateTaxPayment: (id: string, paymentData: {
+        amount: number;
+        challan_number?: string;
+        payment_method?: string;
+        notes?: string;
+    }) => Promise<any>;  // ADD THIS LINE
     getTaxSummary: (startDate?: string, endDate?: string) => Promise<any>;
 
     connectGoogleDrive: () => Promise<any>;
@@ -175,6 +181,10 @@ const electronAPI: ElectronAPI = {
     },
     createTaxPayment: async (paymentData) => {
         const result = await window.electronAPI.createTaxPayment(paymentData);
+        return result.success ? result.data : null;
+    },
+      updateTaxPayment: async (id, paymentData) => {  // ADD THIS
+        const result = await window.electronAPI.updateTaxPayment(id, paymentData);
         return result.success ? result.data : null;
     },
     getTaxSummary: async (startDate, endDate) => {
@@ -489,6 +499,14 @@ const webAPI: ElectronAPI = {
     // Tax Management
     getTaxPayments: async () => {
         const response = await fetch('/api/tax/payments');
+        return response.json();
+    },
+       updateTaxPayment: async (id, paymentData) => {  // ADD THIS
+        const response = await fetch(`/api/tax/payments/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(paymentData),
+            headers: { 'Content-Type': 'application/json' }
+        });
         return response.json();
     },
     createTaxPayment: async (paymentData) => {

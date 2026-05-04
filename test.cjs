@@ -1,117 +1,124 @@
-// run-migration.cjs
 const { app } = require('electron');
 const Database = require('better-sqlite3');
 const path = require('path');
 const os = require('os');
+const readline = require('readline');
 
+// Database path - same as your migration script
 const dbPath = path.join(os.homedir(), 'Library/Application Support/electron', 'pos.db');
-console.log('Database path:', dbPath);
+console.log('📁 Database path:', dbPath);
 
-try {
-    const db = new Database(dbPath);
-    console.log('Connected to database');
-    
-    console.log('Migrating employee tables...');
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+});
 
-    // Add new columns to employees table
-    try {
-        db.exec(`ALTER TABLE employees ADD COLUMN payment_type TEXT DEFAULT 'fixed'`);
-        console.log('✅ Added payment_type column');
-    } catch(e) { console.log('payment_type column already exists'); }
-
-    try {
-        db.exec(`ALTER TABLE employees ADD COLUMN daily_rate DECIMAL(10,2) DEFAULT 0`);
-        console.log('✅ Added daily_rate column');
-    } catch(e) { console.log('daily_rate column already exists'); }
-
-    try {
-        db.exec(`ALTER TABLE employees ADD COLUMN weekly_rate DECIMAL(10,2) DEFAULT 0`);
-        console.log('✅ Added weekly_rate column');
-    } catch(e) { console.log('weekly_rate column already exists'); }
-
-    try {
-        db.exec(`ALTER TABLE employees ADD COLUMN hourly_rate DECIMAL(10,2) DEFAULT 0`);
-        console.log('✅ Added hourly_rate column');
-    } catch(e) { console.log('hourly_rate column already exists'); }
-
-    try {
-        db.exec(`ALTER TABLE employees ADD COLUMN contract_amount DECIMAL(10,2) DEFAULT 0`);
-        console.log('✅ Added contract_amount column');
-    } catch(e) { console.log('contract_amount column already exists'); }
-
-    try {
-        db.exec(`ALTER TABLE employees ADD COLUMN contract_start_date DATE`);
-        console.log('✅ Added contract_start_date column');
-    } catch(e) { console.log('contract_start_date column already exists'); }
-
-    try {
-        db.exec(`ALTER TABLE employees ADD COLUMN contract_end_date DATE`);
-        console.log('✅ Added contract_end_date column');
-    } catch(e) { console.log('contract_end_date column already exists'); }
-
-    // Create employee_payments table
-    db.exec(`
-        CREATE TABLE IF NOT EXISTS employee_payments (
-            id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-            employee_id TEXT NOT NULL,
-            payment_date DATETIME NOT NULL,
-            amount DECIMAL(10,2) NOT NULL,
-            payment_type TEXT NOT NULL,
-            period_start DATE,
-            period_end DATE,
-            description TEXT,
-            status TEXT DEFAULT 'completed',
-            payment_method TEXT DEFAULT 'cash',
-            reference_id TEXT,
-            user_id TEXT NOT NULL,
-            shop_id TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-        )
-    `);
-    console.log('✅ Created employee_payments table');
-
-    // Create indexes for employee_payments
-    db.exec(`
-        CREATE INDEX IF NOT EXISTS idx_employee_payments_employee ON employee_payments(employee_id);
-        CREATE INDEX IF NOT EXISTS idx_employee_payments_date ON employee_payments(payment_date);
-    `);
-    console.log('✅ Created indexes for employee_payments');
-
-    // Create employee_advances table
-    db.exec(`
-        CREATE TABLE IF NOT EXISTS employee_advances (
-            id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-            employee_id TEXT NOT NULL,
-            advance_date DATETIME NOT NULL,
-            amount DECIMAL(10,2) NOT NULL,
-            paid_amount DECIMAL(10,2) DEFAULT 0,
-            remaining_amount DECIMAL(10,2) NOT NULL,
-            reason TEXT NOT NULL,
-            status TEXT DEFAULT 'pending',
-            expected_deduction_date DATE,
-            user_id TEXT NOT NULL,
-            shop_id TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-        )
-    `);
-    console.log('✅ Created employee_advances table');
-
-    // Create indexes for employee_advances
-    db.exec(`
-        CREATE INDEX IF NOT EXISTS idx_employee_advances_employee ON employee_advances(employee_id);
-        CREATE INDEX IF NOT EXISTS idx_employee_advances_status ON employee_advances(status);
-    `);
-    console.log('✅ Created indexes for employee_advances');
-
-    console.log('Migration completed successfully!');
-    db.close();
-    
-} catch (error) {
-    console.error('Migration failed:', error.message);
+function askQuestion(question) {
+    return new Promise((resolve) => {
+        rl.question(question, (answer) => {
+            resolve(answer);
+        });
+    });
 }
 
-app.quit();
+async function clearTaxPayments() {
+    try {
+        const db = new Database(dbPath);
+        console.log('✅ Connected to database');
+        
+        // Check if tax_payments table exists
+        const tableCheck = db.prepare(`
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='tax_payments'
+        `).get();
+        
+        if (!tableCheck) {
+            console.log('⚠️  tax_payments table does not exist. Nothing to clear.');
+            db.close();
+            rl.close();
+            return;
+        }
+        
+        // Get count before deletion
+        const countBefore = db.prepare('SELECT COUNT(*) as count FROM tax_payments').get();
+        console.log(`\n📊 Current tax payment records: ${countBefore.count}`);
+        
+        if (countBefore.count === 0) {
+            console.log('✅ No tax payment records found. Database is already clean.');
+            db.close();
+            rl.close();
+            return;
+        }
+        
+        // Show recent payments for confirmation
+        console.log('\n📋 Recent tax payments:');
+        const recentPayments = db.prepare(`
+            SELECT id, period_start, period_end, amount, challan_number, payment_date 
+            FROM tax_payments 
+            ORDER BY payment_date DESC 
+            LIMIT 5
+        `).all();
+        
+        if (recentPayments.length > 0) {
+            console.table(recentPayments.map(p => ({
+                Date: p.payment_date?.split('T')[0],
+                Period: p.period_start,
+                Amount: `PKR ${p.amount}`,
+                Challan: p.challan_number
+            })));
+        }
+        
+        // Ask for confirmation
+        const answer = await askQuestion(`\n⚠️  Are you sure you want to DELETE ALL ${countBefore.count} tax payment records? This action cannot be undone! (type "DELETE" to confirm): `);
+        
+        if (answer !== 'DELETE') {
+            console.log('❌ Operation cancelled. Type "DELETE" to confirm.');
+            db.close();
+            rl.close();
+            return;
+        }
+        
+        // Second confirmation
+        const secondAnswer = await askQuestion(`\n⚠️  FINAL WARNING: This will permanently delete ${countBefore.count} tax payment records. Type "CONFIRM" to proceed: `);
+        
+        if (secondAnswer !== 'CONFIRM') {
+            console.log('❌ Operation cancelled.');
+            db.close();
+            rl.close();
+            return;
+        }
+        
+        console.log('\n🗑️  Deleting tax payment records...');
+        
+        // Delete all records
+        const deleteResult = db.prepare('DELETE FROM tax_payments').run();
+        console.log(`✅ Deleted ${deleteResult.changes} tax payment records`);
+        
+        // Verify deletion
+        const countAfter = db.prepare('SELECT COUNT(*) as count FROM tax_payments').get();
+        console.log(`📊 Records after deletion: ${countAfter.count}`);
+        
+        // Optional: Vacuum database to reclaim space
+        console.log('🔄 Optimizing database...');
+        db.exec('VACUUM');
+        console.log('✅ Database optimized');
+        
+        console.log('\n🎉 Tax payment history cleared successfully!');
+        
+        db.close();
+        rl.close();
+        
+        // Auto quit after 2 seconds
+        setTimeout(() => {
+            process.exit(0);
+        }, 2000);
+        
+    } catch (error) {
+        console.error('❌ Error clearing tax payments:', error.message);
+        rl.close();
+        process.exit(1);
+    }
+}
+
+// Run the cleanup
+clearTaxPayments();

@@ -3636,6 +3636,68 @@ export function setupIpcHandlers() {
         }
     });
 
+    // Update Tax Payment
+ipcMain.handle('db:updateTaxPayment', async (event, id, paymentData) => {
+    console.log('IPC updateTaxPayment called with:', { id, paymentData });
+    const db = getDb();
+    
+    try {
+        // Build dynamic update query based on provided fields
+        const updates = [];
+        const values = [];
+        
+        if (paymentData.amount !== undefined) {
+            updates.push('amount = ?');
+            values.push(paymentData.amount);
+        }
+        if (paymentData.challan_number !== undefined) {
+            updates.push('challan_number = ?');
+            values.push(paymentData.challan_number);
+        }
+        if (paymentData.payment_method !== undefined) {
+            updates.push('payment_method = ?');
+            values.push(paymentData.payment_method);
+        }
+        if (paymentData.notes !== undefined) {
+            updates.push('notes = ?');
+            values.push(paymentData.notes);
+        }
+        
+        // Remove the updated_at line since column doesn't exist
+        // updates.push('updated_at = CURRENT_TIMESTAMP'); // COMMENT THIS OUT
+        
+        if (updates.length === 0) {
+            return { success: false, error: 'No fields to update' };
+        }
+        
+        // Add id to values array
+        values.push(id);
+        
+        const query = `UPDATE tax_payments SET ${updates.join(', ')} WHERE id = ?`;
+        console.log('Executing query:', query);
+        console.log('With values:', values);
+        
+        const stmt = db.prepare(query);
+        const result = stmt.run(...values);
+        
+        console.log('Update result:', result);
+        
+        if (result.changes === 0) {
+            return { success: false, error: 'Tax payment not found' };
+        }
+        
+        // Get the updated payment
+        const updatedPayment = db.prepare('SELECT * FROM tax_payments WHERE id = ?').get(id);
+        console.log('Updated payment:', updatedPayment);
+        
+        return { success: true, data: updatedPayment };
+        
+    } catch (error) {
+        console.error('Error updating tax payment:', error);
+        return { success: false, error: error.message };
+    }
+});
+
     // Get Tax Summary
     ipcMain.handle('db:getTaxSummary', async (event, startDate, endDate) => {
         const db = getDb();

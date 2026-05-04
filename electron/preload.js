@@ -498,6 +498,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Tax Management
     getTaxPayments: () => ipcRenderer.invoke('db:getTaxPayments'),
     createTaxPayment: (paymentData) => ipcRenderer.invoke('db:createTaxPayment', paymentData),
+    updateTaxPayment: (id, paymentData) => ipcRenderer.invoke('db:updateTaxPayment', id, paymentData), // ADD THIS LINE
     getTaxSummary: (startDate, endDate) => ipcRenderer.invoke('db:getTaxSummary', startDate, endDate),
 
     restartApp: async () => {

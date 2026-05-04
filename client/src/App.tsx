@@ -13,8 +13,8 @@ import Sales from "@/pages/sales";
 import Purchases from "@/pages/purchases";
 import Suppliers from "@/pages/suppliers";
 import NetProfit from "@/pages/net-profit";
+import Reports from "@/pages/reports";
 import TaxManagement from "@/pages/tax-management";
-
 import Categories from "@/pages/categories";
 import TransactionLogs from "@/pages/transaction-logs";
 import ReceiptManagement from "@/pages/receipt-management";
@@ -108,6 +108,8 @@ function MainContent({ path }: { path: string }) {
       return <Suppliers />;
     case '/net-profit':
       return <NetProfit />;
+    case '/reports':
+      return <Reports />;
     case '/categories':
       return <Categories />;
     case '/transaction-logs':
