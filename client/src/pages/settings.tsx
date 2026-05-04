@@ -68,42 +68,42 @@ export default function SettingsPage() {
     // Add this function
 
     const handleWipeDatabase = async () => {
-    if (wipeConfirmText !== "WIPE ALL DATA") {
-        toast({ 
-            title: "Confirmation Required", 
-            description: "Please type 'WIPE ALL DATA' to confirm", 
-            variant: "destructive" 
-        });
-        return;
-    }
-
-    setIsWiping(true);
-    try {
-        const result = await window.electronAPI.wipeDatabase?.();
-        if (result?.success) {
-            toast({ 
-                title: "Database Wiped", 
-                description: "All data has been cleared. App will restart...", 
-                variant: "destructive" 
+        if (wipeConfirmText !== "WIPE ALL DATA") {
+            toast({
+                title: "Confirmation Required",
+                description: "Please type 'WIPE ALL DATA' to confirm",
+                variant: "destructive"
             });
-            setTimeout(async () => {
-                await window.electronAPI.restartApp();
-            }, 1500);
-        } else {
-            throw new Error(result?.error || "Failed to wipe database");
+            return;
         }
-    } catch (error: any) {
-        toast({ 
-            title: "Wipe Failed", 
-            description: error.message, 
-            variant: "destructive" 
-        });
-    } finally {
-        setIsWiping(false);
-        setIsWipeModalOpen(false);
-        setWipeConfirmText("");
-    }
-};
+
+        setIsWiping(true);
+        try {
+            const result = await window.electronAPI.wipeDatabase?.();
+            if (result?.success) {
+                toast({
+                    title: "Database Wiped",
+                    description: "All data has been cleared. App will restart...",
+                    variant: "destructive"
+                });
+                setTimeout(async () => {
+                    await window.electronAPI.restartApp();
+                }, 1500);
+            } else {
+                throw new Error(result?.error || "Failed to wipe database");
+            }
+        } catch (error: any) {
+            toast({
+                title: "Wipe Failed",
+                description: error.message,
+                variant: "destructive"
+            });
+        } finally {
+            setIsWiping(false);
+            setIsWipeModalOpen(false);
+            setWipeConfirmText("");
+        }
+    };
     const fetchDriveStorage = async () => {
         setIsLoadingStorage(true);
         try {
@@ -163,6 +163,55 @@ export default function SettingsPage() {
             }
         }
     }, []);
+
+    // Add this state near your other state declarations
+    const [lastLocalBackup, setLastLocalBackup] = useState<string | null>(null);
+
+    // Add this useEffect for local auto backup (every 12 hours)
+    useEffect(() => {
+        if (!dbInfo?.path) return;
+
+        console.log('Starting local auto backup every 12 hours');
+
+        // Function to perform local backup
+        const performLocalBackup = async () => {
+            try {
+                console.log('🔄 Running local auto backup at:', new Date().toLocaleTimeString());
+                const result = await window.electronAPI.backupData(); // Use existing backup function
+                if (result?.success) {
+                    console.log('✅ Local auto backup successful');
+                    setLastLocalBackup(new Date().toISOString());
+                    localStorage.setItem('last_local_backup', new Date().toISOString());
+                    toast({
+                        title: "Local Auto Backup",
+                        description: `Database backed up at ${new Date().toLocaleTimeString()}`,
+                        duration: 2000
+                    });
+                } else {
+                    console.error('❌ Local auto backup failed:', result?.error);
+                }
+            } catch (error) {
+                console.error('Local backup error:', error);
+            }
+        };
+
+        // Run immediately once when component mounts
+        performLocalBackup();
+
+        // Set interval for 12 hours (43,200,000 ms)
+        const intervalId = setInterval(performLocalBackup, 12 * 60 * 60 * 1000);
+
+        // Load last backup time from localStorage
+        const savedLastBackup = localStorage.getItem('last_local_backup');
+        if (savedLastBackup) {
+            setLastLocalBackup(savedLastBackup);
+        }
+
+        return () => {
+            console.log('Stopping local auto backup');
+            clearInterval(intervalId);
+        };
+    }, [dbInfo?.path]);
 
     // Update connectGoogleDrive function - remove the listener from here
     const connectGoogleDrive = async () => {
@@ -265,23 +314,25 @@ export default function SettingsPage() {
         }
     };
 
-    // Add this useEffect for auto backup
+    // REPLACE your existing auto backup useEffect with this:
+
+    // Auto backup every 12 hours when Google Drive is connected
     useEffect(() => {
-        if (!autoBackupEnabled || !googleDriveToken || !dbInfo?.path) return;
+        if (!googleDriveToken || !dbInfo?.path) return;
 
-        console.log('Starting auto backup every 1 minute (TEST MODE)');
+        console.log('Starting auto backup every 12 hours');
 
-        // Run immediately once when enabled
+        // Run immediately once when connected
         performAutoBackup();
 
-        // Set interval for 1 minute (60000 ms) for testing
-        const intervalId = setInterval(performAutoBackup, 60000); // 1 minute
+        // Set interval for 12 hours (43,200,000 ms)
+        const intervalId = setInterval(performAutoBackup, 12 * 60 * 60 * 1000); // 12 hours
 
         return () => {
             console.log('Stopping auto backup');
             clearInterval(intervalId);
         };
-    }, [autoBackupEnabled, googleDriveToken, dbInfo?.path]);
+    }, [googleDriveToken, dbInfo?.path]);
 
     const fetchSettings = async () => {
         try {
@@ -702,123 +753,123 @@ export default function SettingsPage() {
                 </TabsContent>
 
                 {/* Database Info Tab */}
-              {/* Database Info Tab */}
-<TabsContent value="database">
-    <Card>
-        <CardHeader>
-            <CardTitle>Database Information</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-            <div className="bg-muted/30 rounded-lg p-4 space-y-2">
-                <div className="flex items-center gap-2">
-                    <Database className="h-5 w-5 text-primary" />
-                    <span className="font-medium">Database Location:</span>
-                </div>
-                <code className="text-sm bg-background p-2 rounded block break-all">
-                    {dbInfo?.path || "Loading..."}
-                </code>
+                {/* Database Info Tab */}
+                <TabsContent value="database">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Database Information</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="bg-muted/30 rounded-lg p-4 space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <Database className="h-5 w-5 text-primary" />
+                                    <span className="font-medium">Database Location:</span>
+                                </div>
+                                <code className="text-sm bg-background p-2 rounded block break-all">
+                                    {dbInfo?.path || "Loading..."}
+                                </code>
 
-                {dbInfo?.size && (
-                    <div className="flex items-center gap-2 mt-2">
-                        <span className="font-medium">Size:</span>
-                        <span>{dbInfo.size}</span>
-                    </div>
-                )}
-            </div>
+                                {dbInfo?.size && (
+                                    <div className="flex items-center gap-2 mt-2">
+                                        <span className="font-medium">Size:</span>
+                                        <span>{dbInfo.size}</span>
+                                    </div>
+                                )}
+                            </div>
 
-            <div className="flex flex-col sm:flex-row gap-3">
-                <Button onClick={handleOpenDataFolder} variant="outline">
-                    Open Data Folder
-                </Button>
-                <Button onClick={fetchDbInfo} variant="ghost">
-                    Refresh Info
-                </Button>
-                <Button 
-                    onClick={() => setIsWipeModalOpen(true)} 
-                    variant="destructive"
-                    className="ml-auto"
-                >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Wipe Database
-                </Button>
-            </div>
+                            <div className="flex flex-col sm:flex-row gap-3">
+                                <Button onClick={handleOpenDataFolder} variant="outline">
+                                    Open Data Folder
+                                </Button>
+                                <Button onClick={fetchDbInfo} variant="ghost">
+                                    Refresh Info
+                                </Button>
+                                <Button
+                                    onClick={() => setIsWipeModalOpen(true)}
+                                    variant="destructive"
+                                    className="ml-auto"
+                                >
+                                    <Trash2 className="h-4 w-4 mr-2" />
+                                    Wipe Database
+                                </Button>
+                            </div>
 
-            <Alert>
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                    Your database is stored locally on this computer. Regular backups are recommended.
-                </AlertDescription>
-            </Alert>
-        </CardContent>
-    </Card>
-</TabsContent>
-{/* Wipe Database Confirmation Modal */}
-<Dialog open={isWipeModalOpen} onOpenChange={setIsWipeModalOpen}>
-    <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-600">
-                <AlertTriangle className="h-5 w-5" />
-                Wipe Entire Database
-            </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4 py-4">
-            <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 rounded-lg p-4">
-                <p className="text-sm text-red-800 dark:text-red-400 font-medium">
-                    ⚠️ DANGER: This action is irreversible!
-                </p>
-                <p className="text-sm text-red-700 dark:text-red-500 mt-2">
-                    This will delete ALL data including:
-                </p>
-                <ul className="text-xs text-red-600 dark:text-red-400 mt-2 space-y-1 list-disc list-inside">
-                    <li>All products and categories</li>
-                    <li>All sales and purchase records</li>
-                    <li>All customers and suppliers</li>
-                    <li>All employees and settings</li>
-                    <li>All expenses and profit records</li>
-                </ul>
-            </div>
-            
-            <div>
-                <Label htmlFor="confirmWipe" className="text-sm font-medium">
-                    Type <span className="font-bold text-red-600">"WIPE ALL DATA"</span> to confirm
-                </Label>
-                <Input
-                    id="confirmWipe"
-                    type="text"
-                    placeholder="WIPE ALL DATA"
-                    value={wipeConfirmText}
-                    onChange={(e) => setWipeConfirmText(e.target.value)}
-                    className="mt-2"
-                />
-            </div>
-        </div>
-        <DialogFooter className="flex gap-2">
-            <Button variant="outline" onClick={() => {
-                setIsWipeModalOpen(false);
-                setWipeConfirmText("");
-            }}>
-                Cancel
-            </Button>
-            <Button 
-                onClick={handleWipeDatabase} 
-                disabled={isWiping || wipeConfirmText !== "WIPE ALL DATA"}
-                variant="destructive"
-            >
-                {isWiping ? (
-                    <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Wiping...
-                    </>
-                ) : (
-                    <>
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        Wipe All Data
-                    </>
-                )}
-            </Button>
-        </DialogFooter>
-    </DialogContent>
-</Dialog>
+                            <Alert>
+                                <AlertCircle className="h-4 w-4" />
+                                <AlertDescription>
+                                    Your database is stored locally on this computer. Regular backups are recommended.
+                                </AlertDescription>
+                            </Alert>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+                {/* Wipe Database Confirmation Modal */}
+                <Dialog open={isWipeModalOpen} onOpenChange={setIsWipeModalOpen}>
+                    <DialogContent className="sm:max-w-md">
+                        <DialogHeader>
+                            <DialogTitle className="flex items-center gap-2 text-red-600">
+                                <AlertTriangle className="h-5 w-5" />
+                                Wipe Entire Database
+                            </DialogTitle>
+                        </DialogHeader>
+                        <div className="space-y-4 py-4">
+                            <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 rounded-lg p-4">
+                                <p className="text-sm text-red-800 dark:text-red-400 font-medium">
+                                    ⚠️ DANGER: This action is irreversible!
+                                </p>
+                                <p className="text-sm text-red-700 dark:text-red-500 mt-2">
+                                    This will delete ALL data including:
+                                </p>
+                                <ul className="text-xs text-red-600 dark:text-red-400 mt-2 space-y-1 list-disc list-inside">
+                                    <li>All products and categories</li>
+                                    <li>All sales and purchase records</li>
+                                    <li>All customers and suppliers</li>
+                                    <li>All employees and settings</li>
+                                    <li>All expenses and profit records</li>
+                                </ul>
+                            </div>
+
+                            <div>
+                                <Label htmlFor="confirmWipe" className="text-sm font-medium">
+                                    Type <span className="font-bold text-red-600">"WIPE ALL DATA"</span> to confirm
+                                </Label>
+                                <Input
+                                    id="confirmWipe"
+                                    type="text"
+                                    placeholder="WIPE ALL DATA"
+                                    value={wipeConfirmText}
+                                    onChange={(e) => setWipeConfirmText(e.target.value)}
+                                    className="mt-2"
+                                />
+                            </div>
+                        </div>
+                        <DialogFooter className="flex gap-2">
+                            <Button variant="outline" onClick={() => {
+                                setIsWipeModalOpen(false);
+                                setWipeConfirmText("");
+                            }}>
+                                Cancel
+                            </Button>
+                            <Button
+                                onClick={handleWipeDatabase}
+                                disabled={isWiping || wipeConfirmText !== "WIPE ALL DATA"}
+                                variant="destructive"
+                            >
+                                {isWiping ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                        Wiping...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        Wipe All Data
+                                    </>
+                                )}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
 
                 {/* Backup & Restore Tab */}
                 <TabsContent value="backup">
@@ -900,26 +951,41 @@ export default function SettingsPage() {
                         </Card>
 
                         {/* Quick Backup Card */}
-                        <Card>
-                            <CardHeader>
-                                <CardTitle>Quick Backup</CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                                <p className="text-sm text-muted-foreground">
-                                    Create an immediate backup of your database to your documents folder.
-                                </p>
-                                <Button onClick={handleBackupNow} variant="outline">
-                                    <Database className="h-4 w-4 mr-2" />
-                                    Backup Now
-                                </Button>
+                       {/* Quick Backup Card - Updated */}
+<Card>
+    <CardHeader>
+        <CardTitle>Quick Backup</CardTitle>
+    </CardHeader>
+    <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+            Create an immediate backup of your database to your documents folder.
+            Auto backup runs every 12 hours automatically.
+        </p>
+        <Button onClick={handleBackupNow} variant="outline">
+            <Database className="h-4 w-4 mr-2" />
+            Backup Now
+        </Button>
 
-                                {dbInfo?.lastBackup && (
-                                    <p className="text-xs text-muted-foreground mt-2">
-                                        Last backup: {new Date(dbInfo.lastBackup).toLocaleString()}
-                                    </p>
-                                )}
-                            </CardContent>
-                        </Card>
+        {lastLocalBackup && (
+            <p className="text-xs text-muted-foreground mt-2">
+                Last auto backup: {new Date(lastLocalBackup).toLocaleString()}
+            </p>
+        )}
+        
+        {dbInfo?.lastBackup && (
+            <p className="text-xs text-muted-foreground">
+                Last manual backup: {new Date(dbInfo.lastBackup).toLocaleString()}
+            </p>
+        )}
+        
+        <div className="bg-green-50 dark:bg-green-950/20 p-3 rounded-lg mt-2">
+            <p className="text-xs text-green-700 dark:text-green-400 flex items-center gap-2">
+                <CheckCircle className="h-3 w-3" />
+                Auto backup runs every 12 hours automatically. No action needed.
+            </p>
+        </div>
+    </CardContent>
+</Card>
                         <Card>
                             <CardHeader>
                                 <CardTitle>Google Drive Backup</CardTitle>
@@ -928,7 +994,7 @@ export default function SettingsPage() {
                                 {!googleDriveToken ? (
                                     <div className="space-y-4">
                                         <p className="text-sm text-muted-foreground">
-                                            Connect your Google Drive to automatically backup your database every 24 hours.
+                                            Connect your Google Drive to automatically backup your database every 12 hours.
                                         </p>
                                         <Button onClick={connectGoogleDrive} disabled={isConnecting}>
                                             {isConnecting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
@@ -940,36 +1006,8 @@ export default function SettingsPage() {
                                         <div className="bg-green-50 dark:bg-green-950/20 p-4 rounded-lg">
                                             <p className="text-green-600 dark:text-green-400">✅ Connected to Google Drive</p>
                                             <p className="text-xs text-muted-foreground mt-1">
-                                                Your database will be backed up automatically every 24 hours
+                                                Your database will be backed up automatically every 12 hours
                                             </p>
-                                        </div>
-
-                                        {/* Auto Backup Toggle - For testing */}
-                                        <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
-                                            <div>
-                                                <p className="text-sm font-medium">Auto Backup (Test Mode)</p>
-                                                <p className="text-xs text-muted-foreground">Every 1 minute for testing</p>
-                                                {autoBackupEnabled && (
-                                                    <p className="text-xs text-green-600 mt-1">
-                                                        Last backup: {localStorage.getItem('last_auto_backup') ?
-                                                            new Date(localStorage.getItem('last_auto_backup')).toLocaleTimeString() : 'Never'}
-                                                    </p>
-                                                )}
-                                            </div>
-                                            <button
-                                                onClick={() => {
-                                                    const newState = !autoBackupEnabled;
-                                                    setAutoBackupEnabled(newState);
-                                                    localStorage.setItem('auto_backup_enabled', newState.toString());
-                                                }}
-                                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${autoBackupEnabled ? 'bg-green-600' : 'bg-gray-300'
-                                                    }`}
-                                            >
-                                                <span
-                                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${autoBackupEnabled ? 'translate-x-6' : 'translate-x-1'
-                                                        }`}
-                                                />
-                                            </button>
                                         </div>
 
                                         <div className="flex gap-2">
@@ -991,22 +1029,13 @@ export default function SettingsPage() {
                                             </Button>
                                             <Button variant="outline" onClick={() => {
                                                 setGoogleDriveToken('');
-                                                setAutoBackupEnabled(false);
                                                 localStorage.removeItem('google_drive_token');
                                                 localStorage.removeItem('google_drive_connected');
-                                                localStorage.removeItem('auto_backup_enabled');
-                                                localStorage.removeItem('last_auto_backup');
                                                 toast({ title: "Disconnected", description: "Google Drive disconnected" });
                                             }}>
                                                 Disconnect
                                             </Button>
                                         </div>
-
-                                        {autoBackupEnabled && (
-                                            <p className="text-xs text-green-600 text-center">
-                                                Auto backup running every 1 minute (TEST MODE)
-                                            </p>
-                                        )}
                                     </div>
                                 )}
                             </CardContent>

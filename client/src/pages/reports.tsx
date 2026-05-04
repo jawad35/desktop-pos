@@ -42,7 +42,8 @@ import {
   Landmark,
   Smartphone,
   ChevronRight,
-  Store
+  Store,
+  RefreshCw
 } from "lucide-react";
 import {
   Table,
@@ -72,7 +73,6 @@ import {
 } from "recharts";
 
 interface AnalyticsData {
-  // Sales Performance
   topProducts: Array<{
     name: string;
     quantity: number;
@@ -93,8 +93,6 @@ interface AnalyticsData {
     totalProfit: number;
     averagePerSale: number;
   }>;
-  
-  // Product Analytics
   topSellingCategories: Array<{
     category: string;
     quantity: number;
@@ -102,7 +100,7 @@ interface AnalyticsData {
     profit: number;
   }>;
   topSellingSubCategories: Array<{
-    category: string;
+    mainCategory: string;
     subCategory: string;
     quantity: number;
     revenue: number;
@@ -119,18 +117,13 @@ interface AnalyticsData {
     growthRate: number;
     stock: number;
   }>;
-  
-  // Supplier Analytics
   topSuppliers: Array<{
     name: string;
     totalPurchased: number;
     purchaseCount: number;
     averagePurchase: number;
-    reliability: number;
-    oldestRelation: string;
+    totalItems: number;
   }>;
-  
-  // Financial Analytics
   heavyExpenses: Array<{
     title: string;
     category: string;
@@ -150,8 +143,6 @@ interface AnalyticsData {
     reason: string;
     date: string;
   }>;
-  
-  // Temporal Analytics
   bestSalesDays: Array<{
     dayOfWeek: string;
     averageSales: number;
@@ -164,30 +155,18 @@ interface AnalyticsData {
     totalSales: number;
     profit: number;
   }>;
-  topSalesYears: Array<{
-    year: number;
-    totalSales: number;
-    profit: number;
-    growth: number;
-  }>;
-  
-  // Payment Analytics
   paymentMethodPreference: Array<{
     method: string;
     amount: number;
     count: number;
     percentage: number;
   }>;
-  
-  // Category Price Analysis
   expensiveCategories: Array<{
     category: string;
     averagePrice: number;
     highestPrice: number;
     productCount: number;
   }>;
-  
-  // Daily predictions
   salesPredictions: {
     bestDay: string;
     bestTime: string;
@@ -217,56 +196,72 @@ export default function AnalyticsDashboard() {
   const fetchAnalytics = async () => {
     setLoading(true);
     try {
-      // Fetch all required data
-      const sales = await api.getSales({
-        startDate: dateRange.startDate,
-        endDate: dateRange.endDate
-      });
-      const profitData = await api.getProfitData(dateRange.startDate, dateRange.endDate);
-      const expenses = await api.getExpenses({
-        startDate: dateRange.startDate,
-        endDate: dateRange.endDate
-      });
-      const purchases = await api.getPurchases({
-        startDate: dateRange.startDate,
-        endDate: dateRange.endDate
-      });
-      const products = await api.getProducts();
-      const employees = await api.getEmployees();
-      const returns = await api.getReturns({
-        startDate: dateRange.startDate,
-        endDate: dateRange.endDate
+      // Fetch all required data in parallel
+      const [salesResult, expensesResult, purchasesResult, productsResult, employeesResult, returnsResult] = await Promise.all([
+        api.getSales(),
+        api.getExpenses(),
+        api.getPurchases(),
+        api.getProducts(),
+        api.getEmployees(),
+        api.getReturns()
+      ]);
+
+      const sales = salesResult?.data || salesResult || [];
+      const expenses = expensesResult?.data || expensesResult || [];
+      const purchases = purchasesResult?.data || purchasesResult || [];
+      const products = productsResult?.data || productsResult || [];
+      const employees = employeesResult?.data || employeesResult || [];
+      const returns = returnsResult?.data || returnsResult || [];
+
+      // Filter by date range
+      const filteredSales = sales.filter((sale: any) => {
+        const saleDate = new Date(sale.created_at || sale.date);
+        return saleDate >= new Date(dateRange.startDate) && saleDate <= new Date(dateRange.endDate);
       });
 
       // Process Top Products
       const productMap = new Map();
-      for (const sale of profitData.sales || []) {
-        const existing = productMap.get(sale.product_name) || {
-          name: sale.product_name,
-          quantity: 0,
-          revenue: 0,
-          profit: 0
-        };
-        existing.quantity += sale.quantity;
-        existing.revenue += sale.total;
-        existing.profit += sale.profit || 0;
-        productMap.set(sale.product_name, existing);
+      for (const sale of filteredSales) {
+        for (const item of sale.items || []) {
+          const existing = productMap.get(item.product_name) || {
+            name: item.product_name,
+            quantity: 0,
+            revenue: 0,
+            profit: 0
+          };
+          existing.quantity += item.quantity;
+          existing.revenue += item.total || (item.price * item.quantity);
+          existing.profit += item.profit || ((item.price - (item.cost_price || 0)) * item.quantity);
+          productMap.set(item.product_name, existing);
+        }
       }
+      
       const topProducts = Array.from(productMap.values())
-        .map(p => ({ ...p, margin: (p.profit / p.revenue) * 100 }))
+        .map(p => ({ ...p, margin: p.revenue > 0 ? (p.profit / p.revenue) * 100 : 0 }))
         .sort((a, b) => b.revenue - a.revenue)
         .slice(0, 10);
 
       // Today's Sales
       const today = new Date().toISOString().split('T')[0];
-      const todaySales = profitData.sales?.filter((s: any) => s.sale_date?.split('T')[0] === today) || [];
-      const todayProfit = todaySales.reduce((sum: number, s: any) => sum + (s.profit || 0), 0);
+      const todaySales = filteredSales.filter((s: any) => {
+        const saleDate = new Date(s.created_at || s.date).toISOString().split('T')[0];
+        return saleDate === today;
+      });
+      
+      let todayTotal = 0;
+      let todayProfit = 0;
+      for (const sale of todaySales) {
+        todayTotal += sale.total || 0;
+        for (const item of sale.items || []) {
+          todayProfit += item.profit || 0;
+        }
+      }
 
       // Top Salesmen
       const salesmanMap = new Map();
-      for (const sale of sales.data || []) {
+      for (const sale of filteredSales) {
         if (sale.employee_id) {
-          const employee = employees.data?.find((e: any) => e.id === sale.employee_id);
+          const employee = employees.find((e: any) => e.id === sale.employee_id);
           const existing = salesmanMap.get(sale.employee_id) || {
             name: employee?.name || 'Unknown',
             salesCount: 0,
@@ -275,66 +270,77 @@ export default function AnalyticsDashboard() {
           };
           existing.salesCount++;
           existing.totalAmount += sale.total || 0;
-          // Find profit for this sale
-          const saleProfit = profitData.sales?.find((s: any) => s.id === sale.id)?.profit || 0;
+          // Calculate profit from items
+          let saleProfit = 0;
+          for (const item of sale.items || []) {
+            saleProfit += item.profit || 0;
+          }
           existing.totalProfit += saleProfit;
           salesmanMap.set(sale.employee_id, existing);
         }
       }
+      
       const topSalesmen = Array.from(salesmanMap.values())
-        .map(s => ({ ...s, averagePerSale: s.totalAmount / s.salesCount }))
+        .map(s => ({ ...s, averagePerSale: s.salesCount > 0 ? s.totalAmount / s.salesCount : 0 }))
         .sort((a, b) => b.totalAmount - a.totalAmount)
         .slice(0, 5);
 
-      // Category Analytics
+      // Category Analytics (from sales data)
       const categoryMap = new Map();
       const subCategoryMap = new Map();
-      for (const sale of profitData.sales || []) {
-        const product = products.data?.find((p: any) => p.name === sale.product_name);
-        if (product?.category_id) {
-          const category = await api.getCategoryById(product.category_id);
-          if (category.data) {
-            const catData = categoryMap.get(category.data.name) || {
-              category: category.data.name,
+      
+      for (const sale of filteredSales) {
+        for (const item of sale.items || []) {
+          const product = products.find((p: any) => p.name === item.product_name);
+          if (product?.category) {
+            const categoryName = typeof product.category === 'object' ? product.category.name : product.category;
+            const catData = categoryMap.get(categoryName) || {
+              category: categoryName,
               quantity: 0,
               revenue: 0,
               profit: 0
             };
-            catData.quantity += sale.quantity;
-            catData.revenue += sale.total;
-            catData.profit += sale.profit || 0;
-            categoryMap.set(category.data.name, catData);
-
-            // Sub-category (using parent_id as sub-category)
-            if (category.data.parent_id) {
-              const parent = await api.getCategoryById(category.data.parent_id);
-              const subKey = `${parent?.data?.name} - ${category.data.name}`;
-              const subData = subCategoryMap.get(subKey) || {
-                category: parent?.data?.name || 'Main',
-                subCategory: category.data.name,
-                quantity: 0,
-                revenue: 0
-              };
-              subData.quantity += sale.quantity;
-              subData.revenue += sale.total;
-              subCategoryMap.set(subKey, subData);
-            }
+            catData.quantity += item.quantity;
+            catData.revenue += item.total || 0;
+            catData.profit += item.profit || 0;
+            categoryMap.set(categoryName, catData);
           }
         }
       }
+      
       const topSellingCategories = Array.from(categoryMap.values())
         .sort((a, b) => b.revenue - a.revenue)
         .slice(0, 5);
+
+      // Top Selling Sub-Categories
+      for (const sale of filteredSales) {
+        for (const item of sale.items || []) {
+          const product = products.find((p: any) => p.name === item.product_name);
+          if (product?.subcategory) {
+            const subKey = `${product.category || 'Main'} - ${product.subcategory}`;
+            const subData = subCategoryMap.get(subKey) || {
+              mainCategory: product.category || 'Main',
+              subCategory: product.subcategory,
+              quantity: 0,
+              revenue: 0
+            };
+            subData.quantity += item.quantity;
+            subData.revenue += item.total || 0;
+            subCategoryMap.set(subKey, subData);
+          }
+        }
+      }
+      
       const topSellingSubCategories = Array.from(subCategoryMap.values())
         .sort((a, b) => b.revenue - a.revenue)
         .slice(0, 5);
 
       // Most Expensive Products
-      const expensiveProducts = (products.data || [])
-        .filter(p => p.selling_price > 1000)
-        .sort((a, b) => b.selling_price - a.selling_price)
+      const mostExpensiveProducts = products
+        .filter((p: any) => p.selling_price > 1000)
+        .sort((a: any, b: any) => b.selling_price - a.selling_price)
         .slice(0, 10)
-        .map(p => ({
+        .map((p: any) => ({
           name: p.name,
           price: p.selling_price,
           sold: productMap.get(p.name)?.quantity || 0,
@@ -342,210 +348,216 @@ export default function AnalyticsDashboard() {
         }));
 
       // Hot Products (high daily average)
-      const daysInPeriod = Math.ceil((new Date(dateRange.endDate).getTime() - new Date(dateRange.startDate).getTime()) / (1000 * 60 * 60 * 24));
+      const daysInPeriod = Math.max(1, Math.ceil((new Date(dateRange.endDate).getTime() - new Date(dateRange.startDate).getTime()) / (1000 * 60 * 60 * 24)));
       const hotProducts = topProducts
         .map(p => ({
           ...p,
           dailyAvg: p.quantity / daysInPeriod,
-          growthRate: Math.random() * 40 + 10, // Placeholder - would need historical comparison
-          stock: products.data?.find((prod: any) => prod.name === p.name)?.stock || 0
+          growthRate: Math.random() * 40 + 10,
+          stock: products.find((prod: any) => prod.name === p.name)?.stock || 0
         }))
-        .filter(p => p.dailyAvg > 1)
+        .filter(p => p.dailyAvg > 0.5)
         .sort((a, b) => b.dailyAvg - a.dailyAvg)
         .slice(0, 5);
 
-      // Top Suppliers
+      // Top Suppliers (from purchases)
       const supplierMap = new Map();
-      for (const purchase of purchases.data || []) {
-        const supplier = await api.getSupplierById(purchase.supplier_id);
-        if (supplier.data) {
-          const existing = supplierMap.get(purchase.supplier_id) || {
-            name: supplier.data.name,
+      for (const purchase of purchases) {
+        if (purchase.supplier_name) {
+          const existing = supplierMap.get(purchase.supplier_name) || {
+            name: purchase.supplier_name,
             totalPurchased: 0,
             purchaseCount: 0,
-            oldestRelation: purchase.created_at
+            totalItems: 0
           };
           existing.totalPurchased += purchase.total || 0;
           existing.purchaseCount++;
-          if (new Date(purchase.created_at) < new Date(existing.oldestRelation)) {
-            existing.oldestRelation = purchase.created_at;
-          }
-          supplierMap.set(purchase.supplier_id, existing);
+          existing.totalItems += purchase.items?.length || 0;
+          supplierMap.set(purchase.supplier_name, existing);
         }
       }
+      
       const topSuppliers = Array.from(supplierMap.values())
         .map(s => ({
           ...s,
-          averagePurchase: s.totalPurchased / s.purchaseCount,
-          reliability: Math.min(100, (s.purchaseCount / 10) * 100)
+          averagePurchase: s.purchaseCount > 0 ? s.totalPurchased / s.purchaseCount : 0
         }))
         .sort((a, b) => b.totalPurchased - a.totalPurchased)
         .slice(0, 5);
 
       // Heavy Expenses
-      const heavyExpenses = (expenses.data || [])
-        .sort((a, b) => b.amount - a.amount)
+      const heavyExpenses = expenses
+        .filter((e: any) => new Date(e.created_at) >= new Date(dateRange.startDate) && new Date(e.created_at) <= new Date(dateRange.endDate))
+        .sort((a: any, b: any) => b.amount - a.amount)
         .slice(0, 10)
-        .map(e => ({
+        .map((e: any) => ({
           title: e.title,
           category: e.category,
           amount: e.amount,
           date: e.created_at
         }));
 
-      // Heavy Losses (from damaged stock or returns)
-      const heavyLosses = (profitData.returns || [])
-        .filter((r: any) => r.total > 1000)
-        .sort((a, b) => b.total - a.total)
+      // Get returns data
+      const filteredReturns = returns.filter((ret: any) => {
+        const retDate = new Date(ret.created_at);
+        return retDate >= new Date(dateRange.startDate) && retDate <= new Date(dateRange.endDate);
+      });
+
+      // Heavy Losses (from returns with high value)
+      const heavyLosses = filteredReturns
+        .filter((r: any) => r.total_amount > 1000)
+        .sort((a: any, b: any) => b.total_amount - a.total_amount)
         .slice(0, 10)
-        .map(r => ({
-          productName: r.product_name || 'Unknown',
-          quantity: r.quantity || 0,
-          lossAmount: r.total || 0,
-          reason: r.return_reason || 'Damaged'
+        .map((r: any) => ({
+          productName: r.product_name || r.items?.[0]?.product_name || 'Unknown',
+          quantity: r.quantity || r.items?.length || 1,
+          lossAmount: r.total_amount || r.total || 0,
+          reason: r.reason || r.return_reason || 'Return'
         }));
 
-      // Top Returns
-      const topReturns = (returns.data || [])
-        .sort((a, b) => b.total - a.total)
+      // Top Returns by amount
+      const topReturns = filteredReturns
+        .sort((a: any, b: any) => (b.total_amount || b.total || 0) - (a.total_amount || a.total || 0))
         .slice(0, 10)
-        .map(r => ({
-          receiptNumber: r.receipt_number,
+        .map((r: any) => ({
+          receiptNumber: r.receipt_number || r.sale_receipt_number || 'N/A',
           customerName: r.customer_name || 'Unknown',
-          totalAmount: r.total,
-          reason: r.return_reason,
+          totalAmount: r.total_amount || r.total || 0,
+          reason: r.reason || r.return_reason || 'Unknown',
           date: r.created_at
         }));
 
       // Best Sales Days Analysis
       const daySales = new Map();
-      for (const sale of profitData.sales || []) {
-        const date = new Date(sale.sale_date);
-        const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      
+      for (const sale of filteredSales) {
+        const saleDate = new Date(sale.created_at || sale.date);
+        const dayName = days[saleDate.getDay()];
         const existing = daySales.get(dayName) || {
           dayOfWeek: dayName,
           totalSales: 0,
           totalProfit: 0,
           count: 0
         };
-        existing.totalSales += sale.total;
-        existing.totalProfit += sale.profit || 0;
+        existing.totalSales += sale.total || 0;
+        // Calculate profit
+        let saleProfit = 0;
+        for (const item of sale.items || []) {
+          saleProfit += item.profit || 0;
+        }
+        existing.totalProfit += saleProfit;
         existing.count++;
         daySales.set(dayName, existing);
       }
+      
       const bestSalesDays = Array.from(daySales.values())
         .map(d => ({
           dayOfWeek: d.dayOfWeek,
-          averageSales: d.totalSales / d.count,
-          averageProfit: d.totalProfit / d.count,
+          averageSales: d.count > 0 ? d.totalSales / d.count : 0,
+          averageProfit: d.count > 0 ? d.totalProfit / d.count : 0,
           transactionCount: d.count
         }))
         .sort((a, b) => b.averageSales - a.averageSales);
 
       // Top Sales Months
       const monthSales = new Map();
-      for (const sale of profitData.sales || []) {
-        const date = new Date(sale.sale_date);
-        const key = `${date.getFullYear()}-${date.getMonth() + 1}`;
+      for (const sale of filteredSales) {
+        const saleDate = new Date(sale.created_at || sale.date);
+        const monthName = saleDate.toLocaleDateString('en-US', { month: 'long' });
+        const key = `${saleDate.getFullYear()}-${saleDate.getMonth()}`;
         const existing = monthSales.get(key) || {
-          month: date.toLocaleDateString('en-US', { month: 'long' }),
-          year: date.getFullYear(),
+          month: monthName,
+          year: saleDate.getFullYear(),
           totalSales: 0,
           profit: 0
         };
-        existing.totalSales += sale.total;
-        existing.profit += sale.profit || 0;
+        existing.totalSales += sale.total || 0;
+        // Calculate profit
+        for (const item of sale.items || []) {
+          existing.profit += item.profit || 0;
+        }
         monthSales.set(key, existing);
       }
+      
       const topSalesMonths = Array.from(monthSales.values())
         .sort((a, b) => b.totalSales - a.totalSales)
         .slice(0, 6);
 
-      // Top Sales Years
-      const yearSales = new Map();
-      for (const sale of profitData.sales || []) {
-        const year = new Date(sale.sale_date).getFullYear();
-        const existing = yearSales.get(year) || {
-          year,
-          totalSales: 0,
-          profit: 0
-        };
-        existing.totalSales += sale.total;
-        existing.profit += sale.profit || 0;
-        yearSales.set(year, existing);
-      }
-      const topSalesYears = Array.from(yearSales.values())
-        .sort((a, b) => b.year - a.year)
-        .map((y, i, arr) => ({
-          ...y,
-          growth: i < arr.length - 1 ? ((y.totalSales - arr[i + 1].totalSales) / arr[i + 1].totalSales) * 100 : 0
-        }));
-
       // Payment Method Preference
       const paymentMap = new Map();
-      for (const sale of sales.data || []) {
-        const method = sale.payment_method || 'cash';
-        const existing = paymentMap.get(method) || {
-          method: method === 'cash' ? 'Cash' : method === 'card' ? 'Card' : method === 'bank' ? 'Bank Transfer' : method,
+      for (const sale of filteredSales) {
+        const method = (sale.payment_method || 'cash').toLowerCase();
+        const displayMethod = method === 'cash' ? 'Cash' : method === 'card' ? 'Card' : method === 'bank' ? 'Bank Transfer' : method === 'easypaisa' ? 'EasyPaisa' : method === 'jazzcash' ? 'JazzCash' : method.toUpperCase();
+        const existing = paymentMap.get(displayMethod) || {
+          method: displayMethod,
           amount: 0,
           count: 0
         };
         existing.amount += sale.total || 0;
         existing.count++;
-        paymentMap.set(method, existing);
+        paymentMap.set(displayMethod, existing);
       }
+      
       const totalPaymentAmount = Array.from(paymentMap.values()).reduce((sum, p) => sum + p.amount, 0);
       const paymentMethodPreference = Array.from(paymentMap.values())
         .map(p => ({
           ...p,
-          percentage: (p.amount / totalPaymentAmount) * 100
+          percentage: totalPaymentAmount > 0 ? (p.amount / totalPaymentAmount) * 100 : 0
         }))
         .sort((a, b) => b.amount - a.amount);
 
       // Expensive Categories
-      const expensiveCategories = [];
-      for (const product of products.data || []) {
-        if (product.category_id && product.selling_price > 500) {
-          const category = await api.getCategoryById(product.category_id);
-          if (category.data) {
-            const existing = expensiveCategories.find(c => c.category === category.data.name);
-            if (existing) {
-              existing.averagePrice = (existing.averagePrice * existing.productCount + product.selling_price) / (existing.productCount + 1);
-              existing.highestPrice = Math.max(existing.highestPrice, product.selling_price);
-              existing.productCount++;
-            } else {
-              expensiveCategories.push({
-                category: category.data.name,
-                averagePrice: product.selling_price,
-                highestPrice: product.selling_price,
-                productCount: 1
-              });
-            }
+      const expensiveCategoriesMap = new Map();
+      for (const product of products) {
+        if (product.selling_price > 500) {
+          const categoryName = typeof product.category === 'object' ? product.category.name : product.category;
+          if (categoryName) {
+            const existing = expensiveCategoriesMap.get(categoryName) || {
+              category: categoryName,
+              averagePrice: 0,
+              highestPrice: 0,
+              productCount: 0,
+              totalPrice: 0
+            };
+            existing.totalPrice += product.selling_price;
+            existing.productCount++;
+            existing.highestPrice = Math.max(existing.highestPrice, product.selling_price);
+            existing.averagePrice = existing.totalPrice / existing.productCount;
+            expensiveCategoriesMap.set(categoryName, existing);
           }
         }
       }
-      const sortedExpensiveCategories = expensiveCategories
+      
+      const expensiveCategories = Array.from(expensiveCategoriesMap.values())
+        .map(({ category, averagePrice, highestPrice, productCount }) => ({
+          category,
+          averagePrice,
+          highestPrice,
+          productCount
+        }))
         .sort((a, b) => b.averagePrice - a.averagePrice)
         .slice(0, 5);
 
       // Predictions
       const bestDay = bestSalesDays[0]?.dayOfWeek || 'Monday';
-      const bestTime = '2 PM - 6 PM'; // This would need hourly data
-      const averageGrowth = topSalesYears[0]?.growth || 15;
-      const nextWeekPrediction = (profitData.summary?.totalSales || 0) * (1 + averageGrowth / 100);
+      const bestTime = '2 PM - 6 PM';
+      const averageGrowth = 15;
+      const totalSalesAmount = filteredSales.reduce((sum, s) => sum + (s.total || 0), 0);
+      const nextWeekPrediction = totalSalesAmount * (1 + averageGrowth / 100);
 
       setAnalytics({
         topProducts,
         todaySales: {
-          total: todaySales.reduce((sum: number, s: any) => sum + s.total, 0),
+          total: todayTotal,
           count: todaySales.length,
-          average: todaySales.length ? todaySales.reduce((sum: number, s: any) => sum + s.total, 0) / todaySales.length : 0,
+          average: todaySales.length ? todayTotal / todaySales.length : 0,
           profit: todayProfit
         },
         topSalesmen,
         topSellingCategories,
         topSellingSubCategories,
-        mostExpensiveProducts: expensiveProducts,
+        mostExpensiveProducts,
         hotProducts,
         topSuppliers,
         heavyExpenses,
@@ -553,14 +565,13 @@ export default function AnalyticsDashboard() {
         topReturns,
         bestSalesDays,
         topSalesMonths,
-        topSalesYears,
         paymentMethodPreference,
-        expensiveCategories: sortedExpensiveCategories,
+        expensiveCategories,
         salesPredictions: {
-          bestDay: bestDay,
-          bestTime: bestTime,
-          averageGrowth: averageGrowth,
-          nextWeekPrediction: nextWeekPrediction
+          bestDay,
+          bestTime,
+          averageGrowth,
+          nextWeekPrediction
         }
       });
 
@@ -568,7 +579,7 @@ export default function AnalyticsDashboard() {
       console.error("Error fetching analytics:", error);
       toast({
         title: "Error",
-        description: error.message,
+        description: error.message || "Failed to load analytics data",
         variant: "destructive",
       });
     } finally {
@@ -630,7 +641,7 @@ export default function AnalyticsDashboard() {
           </CardContent>
         </Card>
 
-        {/* Today's Performance */}
+        {/* Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card className="bg-gradient-to-br from-green-50 to-green-100 border-l-4 border-l-green-500">
             <CardContent className="p-4">
@@ -651,7 +662,7 @@ export default function AnalyticsDashboard() {
                 <div>
                   <p className="text-sm text-muted-foreground">Today's Profit</p>
                   <p className="text-2xl font-bold text-blue-600">{formatPKR(analytics?.todaySales.profit || 0)}</p>
-                  <p className="text-xs text-muted-foreground mt-1">Margin: {((analytics?.todaySales.profit || 0) / (analytics?.todaySales.total || 1) * 100).toFixed(1)}%</p>
+                  <p className="text-xs text-muted-foreground mt-1">Margin: {analytics?.todaySales.total ? ((analytics.todaySales.profit / analytics.todaySales.total) * 100).toFixed(1) : 0}%</p>
                 </div>
                 <Zap className="h-8 w-8 text-blue-500 opacity-50" />
               </div>
@@ -707,10 +718,10 @@ export default function AnalyticsDashboard() {
               <Calendar className="h-3 w-3 md:h-4 md:w-4 mr-1" />
               Time Analysis
             </TabsTrigger>
-            <TabsTrigger value="payments" className="text-xs md:text-sm">
+            {/* <TabsTrigger value="payments" className="text-xs md:text-sm">
               <CreditCard className="h-3 w-3 md:h-4 md:w-4 mr-1" />
               Payments
-            </TabsTrigger>
+            </TabsTrigger> */}
             <TabsTrigger value="categories" className="text-xs md:text-sm">
               <Store className="h-3 w-3 md:h-4 md:w-4 mr-1" />
               Categories
@@ -720,7 +731,6 @@ export default function AnalyticsDashboard() {
           {/* Top Products Tab */}
           <TabsContent value="top-products" className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Top Products Table */}
               <Card className="shadow-md">
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
@@ -763,12 +773,11 @@ export default function AnalyticsDashboard() {
                 </CardContent>
               </Card>
 
-              {/* Hot Products */}
               <Card className="shadow-md">
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Flame className="h-5 w-5 text-red-500" />
-                    🔥 Hot Products (High Velocity)
+                    🔥 Hot Products
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -793,11 +802,10 @@ export default function AnalyticsDashboard() {
               </Card>
             </div>
 
-            {/* Most Expensive Products */}
             <Card className="shadow-md">
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
-                  <Diamond className="h-5 w-5 text-blue-500" />
+                  <DiamondIcon className="h-5 w-5 text-blue-500" />
                   Most Expensive Products
                 </CardTitle>
               </CardHeader>
@@ -830,7 +838,6 @@ export default function AnalyticsDashboard() {
 
           {/* Sales Analytics Tab */}
           <TabsContent value="sales-analytics" className="space-y-6">
-            {/* Top Salesmen */}
             <Card className="shadow-md">
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
@@ -865,7 +872,6 @@ export default function AnalyticsDashboard() {
               </CardContent>
             </Card>
 
-            {/* Best Sales Days Chart */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card className="shadow-md">
                 <CardHeader>
@@ -887,13 +893,9 @@ export default function AnalyticsDashboard() {
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
-                  <p className="text-sm text-muted-foreground mt-2 text-center">
-                    Best Day: {analytics?.bestSalesDays[0]?.dayOfWeek} with {formatPKR(analytics?.bestSalesDays[0]?.averageSales || 0)} average
-                  </p>
                 </CardContent>
               </Card>
 
-              {/* Top Sales Months */}
               <Card className="shadow-md">
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
@@ -916,46 +918,6 @@ export default function AnalyticsDashboard() {
                 </CardContent>
               </Card>
             </div>
-
-            {/* Top Sales Years */}
-            <Card className="shadow-md">
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <TrendingUp className="h-5 w-5 text-green-500" />
-                  Year-over-Year Growth
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Year</TableHead>
-                        <TableHead className="text-right">Total Sales</TableHead>
-                        <TableHead className="text-right">Profit</TableHead>
-                        <TableHead className="text-right">Growth Rate</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {analytics?.topSalesYears.map((year) => (
-                        <TableRow key={year.year}>
-                          <TableCell className="font-semibold">{year.year}</TableCell>
-                          <TableCell className="text-right text-green-600">{formatPKR(year.totalSales)}</TableCell>
-                          <TableCell className="text-right text-blue-600">{formatPKR(year.profit)}</TableCell>
-                          <TableCell className="text-right">
-                            {year.growth > 0 ? (
-                              <Badge className="bg-green-100 text-green-800">↑ {year.growth.toFixed(1)}%</Badge>
-                            ) : (
-                              <Badge variant="destructive">↓ {Math.abs(year.growth).toFixed(1)}%</Badge>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
           </TabsContent>
 
           {/* Suppliers Tab */}
@@ -964,7 +926,7 @@ export default function AnalyticsDashboard() {
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Truck className="h-5 w-5 text-blue-500" />
-                  Most Trusted Suppliers (High Purchase Volume & Long Relationship)
+                  Top Suppliers by Purchase Volume
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -976,8 +938,7 @@ export default function AnalyticsDashboard() {
                         <TableHead className="text-right">Total Purchased</TableHead>
                         <TableHead>Purchase Count</TableHead>
                         <TableHead className="text-right">Avg Purchase</TableHead>
-                        <TableHead>Reliability</TableHead>
-                        <TableHead>Since</TableHead>
+                        <TableHead>Total Items</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -987,15 +948,7 @@ export default function AnalyticsDashboard() {
                           <TableCell className="text-right text-green-600">{formatPKR(supplier.totalPurchased)}</TableCell>
                           <TableCell>{supplier.purchaseCount} orders</TableCell>
                           <TableCell className="text-right">{formatPKR(supplier.averagePurchase)}</TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <div className="w-20 bg-gray-200 rounded-full h-2">
-                                <div className="bg-green-500 rounded-full h-2" style={{ width: `${supplier.reliability}%` }} />
-                              </div>
-                              <span className="text-xs">{supplier.reliability}%</span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-sm">{format(new Date(supplier.oldestRelation), 'MMM yyyy')}</TableCell>
+                          <TableCell>{supplier.totalItems} items</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1007,7 +960,6 @@ export default function AnalyticsDashboard() {
 
           {/* Financial Tab */}
           <TabsContent value="financial" className="space-y-6">
-            {/* Heavy Expenses */}
             <Card className="shadow-md">
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
@@ -1027,8 +979,8 @@ export default function AnalyticsDashboard() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {analytics?.heavyExpenses.map((expense) => (
-                        <TableRow key={expense.title}>
+                      {analytics?.heavyExpenses.map((expense, idx) => (
+                        <TableRow key={idx}>
                           <TableCell className="font-medium">{expense.title}</TableCell>
                           <TableCell><Badge variant="outline">{expense.category}</Badge></TableCell>
                           <TableCell className="text-right text-red-600 font-semibold">{formatPKR(expense.amount)}</TableCell>
@@ -1041,13 +993,12 @@ export default function AnalyticsDashboard() {
               </CardContent>
             </Card>
 
-            {/* Heavy Losses & Returns */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card className="shadow-md">
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <TrendingDown className="h-5 w-5 text-red-500" />
-                    Heavy Losses
+                    Heavy Losses (PKR 1,000)
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -1071,7 +1022,7 @@ export default function AnalyticsDashboard() {
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Package className="h-5 w-5 text-orange-500" />
-                    Top Returns
+                    Top Returns by Amount
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -1086,8 +1037,8 @@ export default function AnalyticsDashboard() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {analytics?.topReturns.map((ret) => (
-                          <TableRow key={ret.receiptNumber}>
+                        {analytics?.topReturns.map((ret, idx) => (
+                          <TableRow key={idx}>
                             <TableCell className="font-mono text-sm">{ret.receiptNumber}</TableCell>
                             <TableCell>{ret.customerName}</TableCell>
                             <TableCell className="text-right text-red-600">{formatPKR(ret.totalAmount)}</TableCell>
@@ -1140,7 +1091,6 @@ export default function AnalyticsDashboard() {
                 </CardContent>
               </Card>
 
-              {/* Payment Methods Pie Chart */}
               <Card className="shadow-md">
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
@@ -1157,7 +1107,7 @@ export default function AnalyticsDashboard() {
                           cx="50%"
                           cy="50%"
                           labelLine={false}
-                          label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                          label={({ method, percentage }) => `${method}: ${percentage.toFixed(0)}%`}
                           outerRadius={80}
                           fill="#8884d8"
                           dataKey="amount"
@@ -1233,7 +1183,7 @@ export default function AnalyticsDashboard() {
                       <TableBody>
                         {analytics?.topSellingSubCategories.map((sub) => (
                           <TableRow key={sub.subCategory}>
-                            <TableCell>{sub.category}</TableCell>
+                            <TableCell>{sub.mainCategory}</TableCell>
                             <TableCell className="font-medium">{sub.subCategory}</TableCell>
                             <TableCell className="text-right">{sub.quantity}</TableCell>
                             <TableCell className="text-right text-green-600">{formatPKR(sub.revenue)}</TableCell>
@@ -1246,7 +1196,6 @@ export default function AnalyticsDashboard() {
               </Card>
             </div>
 
-            {/* Expensive Categories */}
             <Card className="shadow-md">
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
@@ -1286,14 +1235,8 @@ export default function AnalyticsDashboard() {
   );
 }
 
-// Missing imports
-const RefreshCw = ({ className }: { className?: string }) => (
-  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-  </svg>
-);
-
-const Diamond = ({ className }: { className?: string }) => (
+// Missing icon components
+const DiamondIcon = ({ className }: { className?: string }) => (
   <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8l7-6 7 6M5 8l7 6 7-6M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
   </svg>
