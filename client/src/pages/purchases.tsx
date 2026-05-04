@@ -12,21 +12,25 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { formatPKR } from "@/lib/currency";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "../services/electron-api";
-import { Plus, Edit, ShoppingCart, Clock, CheckCircle, AlertCircle, Trash2, Keyboard, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Edit, ShoppingCart, Clock, CheckCircle, AlertCircle, Trash2, Keyboard, ChevronLeft, ChevronRight, Package, Search, Save } from "lucide-react";
 import { format } from "date-fns";
 import { z } from "zod";
-import { Purchase, Supplier } from "@/types/api";
+import { Purchase, Supplier, Product } from "@/types/api";
 import { useHeader } from "@/contexts/HeaderContext";
 import { Textarea } from "@/components/ui/textarea";
 import ItemsDescriptionCell from "@/components/purchase/ItemsDescriptionCell";
 import { useLocation } from "wouter";
 import { KeyboardShortcutsModal } from "../components/modals/KeyboardShortcutsModal";
+import { ProductModal } from "../components/purchases/ProductModal";
 
 // Storage keys
+// Storage keys - separate for new purchase drafts
 const STORAGE_KEYS = {
   PURCHASES_PAGE: 'purchases_current_page',
   PURCHASES_FILTERS: 'purchases_filters',
-  PURCHASES_SCROLL_POSITION: 'purchases_scroll_position'
+  PURCHASES_SCROLL_POSITION: 'purchases_scroll_position',
+  PURCHASES_DRAFT: 'purchases_draft_items',
+  PURCHASES_DRAFT_FORM: 'purchases_draft_form'
 };
 
 const purchaseFormSchema = z.object({
@@ -41,14 +45,34 @@ const purchaseFormSchema = z.object({
   itemsDescription: z.string().optional(),
 });
 
+interface PurchaseItem {
+  product_id: string;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  total: number;
+}
+
+interface DraftFormData {
+  poNumber: string;
+  supplierId: string;
+  tax: number;
+  paymentMethod: string;
+  status: string;
+  paymentStatus: string;
+}
+
 export default function Purchases() {
   const pageSize = 50;
   const [location] = useLocation();
   const { setTitle, setSubtitle } = useHeader();
   const { toast } = useToast();
-  const [, navigate] = useLocation();
+  const [productModalOpen, setProductModalOpen] = useState(false);
+  const [purchaseItems, setPurchaseItems] = useState<PurchaseItem[]>([]);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editProductModalOpen, setEditProductModalOpen] = useState(false);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
-  // Load saved state
   const loadSavedPage = () => {
     try {
       const savedPage = localStorage.getItem(STORAGE_KEYS.PURCHASES_PAGE);
@@ -69,7 +93,7 @@ export default function Purchases() {
           endDate: parsed.endDate || "",
           supplierId: parsed.supplierId || "",
           status: parsed.status || "",
-          search: parsed.search || "",  // Add this
+          search: parsed.search || "",
         };
       }
     } catch (error) { }
@@ -78,8 +102,58 @@ export default function Purchases() {
       endDate: "",
       supplierId: "",
       status: "",
-      search: "",  // Add this
+      search: "",
     };
+  };
+
+  const loadDraftItems = (): PurchaseItem[] => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.PURCHASES_DRAFT);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Validate and return only valid items
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (error) {
+      console.error("Error loading draft items:", error);
+    }
+    return [];
+  };
+
+  const loadDraftFormData = (): DraftFormData | null => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.PURCHASES_DRAFT_FORM);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (error) {
+      console.error("Error loading draft form data:", error);
+    }
+    return null;
+  };
+
+  const saveDraftItems = (items: PurchaseItem[]) => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.PURCHASES_DRAFT, JSON.stringify(items));
+    } catch (error) {
+      console.error("Error saving draft items:", error);
+    }
+  };
+
+  const saveDraftFormData = (data: DraftFormData) => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.PURCHASES_DRAFT_FORM, JSON.stringify(data));
+    } catch (error) {
+      console.error("Error saving draft form data:", error);
+    }
+  };
+
+  const clearDraft = () => {
+    localStorage.removeItem(STORAGE_KEYS.PURCHASES_DRAFT);
+    localStorage.removeItem(STORAGE_KEYS.PURCHASES_DRAFT_FORM);
+    // Don't set form value here, let the reset handle it
   };
 
   const [filters, setFilters] = useState(loadSavedFilters);
@@ -92,6 +166,53 @@ export default function Purchases() {
 
   const mainContentRef = useRef<HTMLDivElement>(null);
   const isFirstLoadRef = useRef(true);
+
+  const form = useForm({
+    resolver: zodResolver(purchaseFormSchema),
+    defaultValues: {
+      poNumber: "",
+      supplierId: "none", // Change from "" to "none"
+      subtotal: 0,
+      tax: 0,
+      total: 0,
+      paymentMethod: "cash",
+      status: "pending",
+      paymentStatus: "pending",
+      itemsDescription: "",
+    },
+  });
+// Save form data to localStorage ONLY for new purchases (not edit)
+useEffect(() => {
+  if (dialogOpen && !editingPurchase && !isInitialLoad) {
+    const formData: DraftFormData = {
+      poNumber: form.watch("poNumber"),
+      supplierId: form.watch("supplierId"),
+      tax: form.watch("tax"),
+      paymentMethod: form.watch("paymentMethod"),
+      status: form.watch("status"),
+      paymentStatus: form.watch("paymentStatus"),
+    };
+    saveDraftFormData(formData);
+  }
+}, [
+  dialogOpen,
+  editingPurchase,
+  form.watch("poNumber"),
+  form.watch("supplierId"),
+  form.watch("tax"),
+  form.watch("paymentMethod"),
+  form.watch("status"),
+  form.watch("paymentStatus"),
+]);
+
+// Save purchase items to localStorage ONLY for new purchases
+useEffect(() => {
+  if (dialogOpen && !editingPurchase && purchaseItems.length > 0) {
+    saveDraftItems(purchaseItems);
+  } else if (dialogOpen && !editingPurchase && purchaseItems.length === 0) {
+    localStorage.removeItem(STORAGE_KEYS.PURCHASES_DRAFT);
+  }
+}, [purchaseItems, dialogOpen, editingPurchase]);
 
   // Fetch purchases
   const { isLoading, refetch } = useQuery<any[]>({
@@ -131,69 +252,340 @@ export default function Purchases() {
     },
   });
 
-  const form = useForm({
-    resolver: zodResolver(purchaseFormSchema),
-    defaultValues: {
-      poNumber: "",
-      supplierId: "",
-      subtotal: "",
-      tax: "0",
-      total: "",
+
+  // Load draft data when component mounts (for tab switching)
+  useEffect(() => {
+    console.log("🔄 Component mounted - loading draft data");
+    const savedItems = loadDraftItems();
+    const savedForm = loadDraftFormData();
+
+    if (savedItems.length > 0 && !dialogOpen) {
+      console.log("✅ Loading saved draft items on mount:", savedItems.length);
+      setPurchaseItems(savedItems);
+
+      if (savedForm && savedForm.poNumber) {
+        form.setValue("poNumber", savedForm.poNumber);
+        form.setValue("supplierId", savedForm.supplierId || "none");
+        form.setValue("tax", savedForm.tax);
+        form.setValue("paymentMethod", savedForm.paymentMethod);
+        form.setValue("status", savedForm.status);
+        form.setValue("paymentStatus", savedForm.paymentStatus);
+      }
+    } else {
+      console.log("ℹ️ No draft items found on mount");
+    }
+  }, []); // Empty dependency array - runs only on mount
+
+  // Save draft when component unmounts (tab switching)
+  useEffect(() => {
+    return () => {
+      // This runs when component unmounts (switching tabs)
+      if (purchaseItems.length > 0 && !dialogOpen) {
+        console.log("💾 Saving draft before unmount:", purchaseItems.length, "items");
+        saveDraftItems(purchaseItems);
+        saveDraftFormData({
+          poNumber: form.getValues("poNumber"),
+          supplierId: form.getValues("supplierId"),
+          tax: form.getValues("tax"),
+          paymentMethod: form.getValues("paymentMethod"),
+          status: form.getValues("status"),
+          paymentStatus: form.getValues("paymentStatus"),
+        });
+      }
+    };
+  }, [purchaseItems, form]); // Runs when purchaseItems or form changes
+
+
+  const [productSearchTerm, setProductSearchTerm] = useState("");
+  const [productSearchResults, setProductSearchResults] = useState<Product[]>([]);
+  const [isSearchingProducts, setIsSearchingProducts] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+
+
+  // Add this function before the return statement (around line 600-620):
+
+  const shareViaWhatsApp = () => {
+    const supplierId = form.getValues("supplierId");
+    const supplier = suppliers.find(s => s.id === supplierId);
+
+    if (!supplier) {
+      toast({ title: "Error", description: "Please select a supplier first", variant: "destructive" });
+      return;
+    }
+
+    if (!supplier.phone) {
+      toast({ title: "Error", description: "Supplier has no phone number", variant: "destructive" });
+      return;
+    }
+
+    if (purchaseItems.length === 0) {
+      toast({ title: "Error", description: "No items to share", variant: "destructive" });
+      return;
+    }
+
+    // Build the message
+    let message = `*PURCHASE ORDER*\n`;
+    message += `PO Number: ${form.getValues("poNumber")}\n`;
+    message += `Date: ${format(new Date(), 'dd/MM/yyyy')}\n`;
+    message += `Supplier: ${supplier.name}\n`;
+    message += `\n*ITEMS:*\n`;
+
+    purchaseItems.forEach((item, index) => {
+      message += `${index + 1}. ${item.product_name}\n`;
+      message += `   Qty: ${item.quantity} × ${formatPKR(item.unit_price)} = ${formatPKR(item.total)}\n`;
+    });
+
+    const subtotal = calculateSubtotal();
+    const tax = form.getValues("tax");
+    const total = subtotal + tax;
+
+    message += `\n*SUMMARY:*\n`;
+    message += `Subtotal: ${formatPKR(subtotal)}\n`;
+    message += `Tax: ${formatPKR(tax)}\n`;
+    message += `*Total: ${formatPKR(total)}*\n`;
+    message += `\nThank you for your business!`;
+
+    // Encode for WhatsApp
+    const encodedMessage = encodeURIComponent(message);
+    const phoneNumber = supplier.phone.replace(/\D/g, '');
+    const whatsappUrl = `https://wa.me/${phoneNumber}?text=${encodedMessage}`;
+
+    window.open(whatsappUrl, '_blank');
+    toast({ description: "Opening WhatsApp..." });
+  };
+
+  const searchProducts = async (searchTerm: string) => {
+    if (!searchTerm.trim()) {
+      setProductSearchResults([]);
+      return;
+    }
+
+    setIsSearchingProducts(true);
+    try {
+      const result = await api.getProducts({ search: searchTerm });
+      let products = [];
+      if (Array.isArray(result)) {
+        products = result;
+      } else if (result?.success && Array.isArray(result.data)) {
+        products = result.data;
+      } else if (result?.data && Array.isArray(result.data)) {
+        products = result.data;
+      }
+      setProductSearchResults(products);
+    } catch (error) {
+      console.error("Error searching products:", error);
+    } finally {
+      setIsSearchingProducts(false);
+    }
+  };
+
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    searchTimeoutRef.current = setTimeout(() => {
+      searchProducts(productSearchTerm);
+    }, 300);
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [productSearchTerm]);
+
+  const addProductToPurchase = (product: Product) => {
+    const existingItem = purchaseItems.find(item => item.product_id === product.id);
+
+    if (existingItem) {
+      const newItems = purchaseItems.map(item =>
+        item.product_id === product.id
+          ? { ...item, quantity: item.quantity + 1, total: (item.quantity + 1) * item.unit_price }
+          : item
+      );
+      setPurchaseItems(newItems);
+    } else {
+      const newItems = [...purchaseItems, {
+        product_id: product.id,
+        product_name: product.name,
+        quantity: 1,
+        unit_price: product.cost_price || product.selling_price || 0,
+        total: product.cost_price || product.selling_price || 0
+      }];
+      setPurchaseItems(newItems);
+    }
+
+    setProductSearchTerm("");
+    setProductSearchResults([]);
+    toast({ description: `${product.name} added to purchase` });
+  };
+
+  const removePurchaseItem = (productId: string) => {
+    const newItems = purchaseItems.filter(item => item.product_id !== productId);
+    setPurchaseItems(newItems);
+    toast({ description: "Item removed from purchase" });
+  };
+
+  const updatePurchaseItemQuantity = (productId: string, quantity: number) => {
+    if (quantity <= 0) {
+      removePurchaseItem(productId);
+      return;
+    }
+
+    const newItems = purchaseItems.map(item =>
+      item.product_id === productId
+        ? { ...item, quantity, total: quantity * item.unit_price }
+        : item
+    );
+    setPurchaseItems(newItems);
+  };
+
+  const updatePurchaseItemPrice = (productId: string, unitPrice: number) => {
+    const newItems = purchaseItems.map(item =>
+      item.product_id === productId
+        ? { ...item, unit_price: unitPrice, total: item.quantity * unitPrice }
+        : item
+    );
+    setPurchaseItems(newItems);
+  };
+
+  const calculateSubtotal = () => {
+    return purchaseItems.reduce((sum, item) => sum + item.total, 0);
+  };
+
+  const generateItemsDescription = () => {
+    if (purchaseItems.length === 0) return "";
+    return purchaseItems.map(item =>
+      `${item.product_name}: ${item.quantity} × ${formatPKR(item.unit_price)} = ${formatPKR(item.total)}`
+    ).join("\n");
+  };
+
+  // Update form when purchase items change
+  useEffect(() => {
+    const subtotal = calculateSubtotal();
+    const tax = form.watch("tax") || 0;
+    const total = subtotal + tax;
+
+    form.setValue("subtotal", subtotal);
+    form.setValue("total", total);
+    form.setValue("itemsDescription", generateItemsDescription());
+  }, [purchaseItems]);
+
+  // Load draft when dialog opens
+  // Load draft when dialog opens
+  useEffect(() => {
+    if (dialogOpen && !editingPurchase) {
+      setIsInitialLoad(true);
+
+      // Load saved items
+      const draftItems = loadDraftItems();
+      if (draftItems.length > 0) {
+        setPurchaseItems(draftItems);
+      } else {
+        setPurchaseItems([]);
+      }
+
+      // Load saved form data
+      const draftForm = loadDraftFormData();
+      if (draftForm && draftForm.poNumber) { // Check if draft exists
+        form.setValue("poNumber", draftForm.poNumber);
+        form.setValue("supplierId", draftForm.supplierId || "none");
+        form.setValue("tax", draftForm.tax);
+        form.setValue("paymentMethod", draftForm.paymentMethod);
+        form.setValue("status", draftForm.status);
+        form.setValue("paymentStatus", draftForm.paymentStatus);
+      } else {
+        // Only set PO number if no draft exists
+        if (!form.getValues("poNumber")) {
+          form.setValue("poNumber", generatePONumber());
+        }
+        if (!form.getValues("supplierId") || form.getValues("supplierId") === "") {
+          form.setValue("supplierId", "none");
+        }
+      }
+
+      setIsInitialLoad(false);
+    }
+  }, [dialogOpen, editingPurchase]);
+
+
+
+
+const createPurchaseMutation = useMutation({
+  mutationFn: async (data: any) => {
+    const purchaseWithIds = {
+      ...data,
+      user_id: data.user_id || 'system',
+      shop_id: data.shop_id || 'default',
+      items: purchaseItems.map(item => ({
+        product_id: item.product_id,
+        quantity: item.quantity,
+        unit_price: item.unit_price
+      }))
+    };
+    const result = await api.createPurchase(purchaseWithIds);
+    if (result?.success) return result.data;
+    return result;
+  },
+  onSuccess: () => {
+    toast({ title: "Purchase Created", description: "Purchase order has been created successfully" });
+    refetch();
+    
+    setPurchaseItems([]);
+    clearDraft(); // Clear draft ONLY after successful new purchase
+    
+    form.reset({
+      poNumber: generatePONumber(),
+      supplierId: "none",
+      subtotal: 0,
+      tax: 0,
+      total: 0,
       paymentMethod: "cash",
       status: "pending",
       paymentStatus: "pending",
       itemsDescription: "",
-    },
-  });
+    });
+    
+    setDialogOpen(false);
+  },
+  onError: (error: Error) => {
+    toast({ title: "Error", description: error.message, variant: "destructive" });
+  },
+});
 
-  const createPurchaseMutation = useMutation({
-    mutationFn: async (data: any) => {
-      const purchaseWithIds = {
-        ...data,
-        user_id: data.user_id || 'system',
-        shop_id: data.shop_id || 'default'
-      };
-      const result = await api.createPurchase(purchaseWithIds);
-      if (result?.success) return result.data;
-      return result;
-    },
-    onSuccess: () => {
-      toast({ title: "Purchase Created", description: "Purchase order has been created successfully" });
-      refetch();
-      setDialogOpen(false);
-      form.reset();
-    },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
-  });
-
-  const updatePurchaseMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: any }) => {
-      const updateData = {
-        status: data.status,
-        payment_status: data.paymentStatus,
-        payment_method: data.paymentMethod,
-        items_description: data.itemsDescription,
-        subtotal: data.subtotal,
-        tax: data.tax,
-        total: data.total,
-        supplier_id: data.supplier_id
-      };
-      const result = await api.updatePurchase(id, updateData);
-      return result;
-    },
-    onSuccess: () => {
-      toast({ title: "Purchase Updated", description: "Purchase order has been updated successfully" });
-      refetch();
-      setDialogOpen(false);
-      setEditingPurchase(null);
-      form.reset();
-    },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
-  });
+const updatePurchaseMutation = useMutation({
+  mutationFn: async ({ id, data }: { id: string; data: any }) => {
+    const updateData = {
+      status: data.status,
+      payment_status: data.paymentStatus,
+      payment_method: data.paymentMethod,
+      items_description: data.itemsDescription,
+      subtotal: data.subtotal,
+      tax: data.tax,
+      total: data.total,
+      supplier_id: data.supplier_id === "none" ? "" : data.supplier_id,
+      items: purchaseItems.map(item => ({
+        product_id: item.product_id,
+        quantity: item.quantity,
+        unit_price: item.unit_price
+      }))
+    };
+    const result = await api.updatePurchase(id, updateData);
+    return result;
+  },
+  onSuccess: () => {
+    toast({ title: "Purchase Updated", description: "Purchase order has been updated successfully" });
+    refetch();
+    setDialogOpen(false);
+    setEditingPurchase(null);
+    setPurchaseItems([]);
+    // DON'T clear draft here - keep for new purchases
+    form.reset();
+  },
+  onError: (error: Error) => {
+    toast({ title: "Error", description: error.message, variant: "destructive" });
+  },
+});
 
   const deletePurchaseMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -220,7 +612,6 @@ export default function Purchases() {
 
     let filtered = [...allPurchasesData];
 
-    // Add search filter
     if (filters.search) {
       const search = filters.search.toLowerCase();
       filtered = filtered.filter(purchase =>
@@ -252,7 +643,6 @@ export default function Purchases() {
     return filtered;
   }, [allPurchasesData, filters]);
 
-  // Apply pagination
   const paginatedData = useMemo(() => {
     if (filteredData.length === 0) return [];
     const start = (currentPage - 1) * pageSize;
@@ -264,19 +654,18 @@ export default function Purchases() {
   const startIndex = filteredData.length > 0 ? (currentPage - 1) * pageSize + 1 : 0;
   const endIndex = Math.min(currentPage * pageSize, filteredData.length);
 
-  // Page validation
   useEffect(() => {
     if (filteredData.length > 0) {
-      const totalPages = Math.ceil(filteredData.length / pageSize);
+      const totalPagesCount = Math.ceil(filteredData.length / pageSize);
       if (isFirstLoadRef.current) {
         const savedPage = loadSavedPage();
         let validPage = savedPage;
-        if (validPage > totalPages) validPage = totalPages;
+        if (validPage > totalPagesCount) validPage = totalPagesCount;
         if (validPage < 1) validPage = 1;
         if (validPage !== currentPage) setCurrentPage(validPage);
         isFirstLoadRef.current = false;
-      } else if (currentPage > totalPages) {
-        setCurrentPage(totalPages);
+      } else if (currentPage > totalPagesCount) {
+        setCurrentPage(totalPagesCount);
       } else if (currentPage < 1) {
         setCurrentPage(1);
       }
@@ -285,7 +674,6 @@ export default function Purchases() {
     }
   }, [filteredData]);
 
-  // Save to localStorage
   useEffect(() => {
     if (!isFirstLoadRef.current) {
       localStorage.setItem(STORAGE_KEYS.PURCHASES_PAGE, currentPage.toString());
@@ -293,7 +681,6 @@ export default function Purchases() {
     }
   }, [currentPage, filters]);
 
-  // Restore scroll position
   useEffect(() => {
     if (!isLoading && paginatedData.length > 0 && mainContentRef.current && !isFirstLoadRef.current) {
       const savedScrollPosition = localStorage.getItem(STORAGE_KEYS.PURCHASES_SCROLL_POSITION);
@@ -316,43 +703,43 @@ export default function Purchases() {
     }
   }, []);
 
-  // Keyboard Shortcuts
   useEffect(() => {
     const handleShortcuts = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
-      // Add this inside the keyboard shortcuts useEffect
-      // Ctrl + F - Focus Search
+
       if (e.ctrlKey && e.key === 'f') {
         e.preventDefault();
         e.stopPropagation();
-        const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement;
+        const searchInput = document.querySelector('input[placeholder*="Search PO"]') as HTMLInputElement;
         if (searchInput) {
           searchInput.focus();
         }
         return;
       }
-      // Ctrl + A - New Purchase
+
       if (e.ctrlKey && e.key === 'a') {
         e.preventDefault();
         e.stopPropagation();
         setEditingPurchase(null);
+        const draftItems = loadDraftItems();
+        const draftForm = loadDraftFormData();
+        setPurchaseItems(draftItems);
         form.reset({
-          poNumber: generatePONumber(),
-          supplierId: "",
-          subtotal: "",
-          tax: "0",
-          total: "",
-          paymentMethod: "cash",
-          status: "pending",
-          paymentStatus: "pending",
+          poNumber: draftForm?.poNumber || generatePONumber(),
+          supplierId: draftForm?.supplierId || "",
+          subtotal: 0,
+          tax: draftForm?.tax || 0,
+          total: 0,
+          paymentMethod: draftForm?.paymentMethod || "cash",
+          status: draftForm?.status || "pending",
+          paymentStatus: draftForm?.paymentStatus || "pending",
           itemsDescription: "",
         });
         setDialogOpen(true);
         return;
       }
 
-      // Ctrl + E - Export
       if (e.ctrlKey && e.key === 'e') {
         e.preventDefault();
         e.stopPropagation();
@@ -360,23 +747,20 @@ export default function Purchases() {
         return;
       }
 
-      // Ctrl + C - Clear Filters
       if (e.ctrlKey && e.key === 'c') {
         e.preventDefault();
         e.stopPropagation();
-        setFilters({ startDate: "", endDate: "", supplierId: "", status: "" });
+        setFilters({ startDate: "", endDate: "", supplierId: "", status: "", search: "" });
         setCurrentPage(1);
         return;
       }
 
-      // Arrow Left - Previous Page
       if (e.key === 'ArrowLeft' && currentPage > 1) {
         e.preventDefault();
         setCurrentPage(p => p - 1);
         return;
       }
 
-      // Arrow Right - Next Page
       if (e.key === 'ArrowRight' && currentPage < totalPages) {
         e.preventDefault();
         setCurrentPage(p => p + 1);
@@ -389,6 +773,8 @@ export default function Purchases() {
   }, [currentPage, totalPages]);
 
   const onSubmit = (data: any) => {
+    const supplierId = data.supplierId === "none" ? "" : data.supplierId;
+
     if (editingPurchase) {
       const updateData = {
         status: data.status,
@@ -398,13 +784,18 @@ export default function Purchases() {
         subtotal: parseFloat(data.subtotal),
         tax: parseFloat(data.tax || 0),
         total: parseFloat(data.total),
-        supplier_id: data.supplierId
+        supplier_id: supplierId,
+        items: purchaseItems.map(item => ({  // Send items for update
+          product_id: item.product_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price
+        }))
       };
       updatePurchaseMutation.mutate({ id: editingPurchase.id, data: updateData });
     } else {
       const purchaseData = {
         poNumber: data.poNumber,
-        supplierId: data.supplierId,
+        supplierId: supplierId,
         subtotal: parseFloat(data.subtotal),
         tax: parseFloat(data.tax || 0),
         total: parseFloat(data.total),
@@ -413,7 +804,12 @@ export default function Purchases() {
         paymentStatus: data.paymentStatus || "pending",
         itemsDescription: data.itemsDescription || "",
         user_id: "system",
-        shop_id: "default"
+        shop_id: "default",
+        items: purchaseItems.map(item => ({  // Send items for new purchase
+          product_id: item.product_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price
+        }))
       };
       createPurchaseMutation.mutate(purchaseData);
     }
@@ -430,17 +826,37 @@ export default function Purchases() {
 
   const handleEdit = (purchase: Purchase) => {
     setEditingPurchase(purchase);
+
+    // Find the full purchase data from already loaded data
+    const fullPurchase = allPurchasesData.find(p => p.id === purchase.id);
+
+    if (fullPurchase && fullPurchase.items) {
+      // Load items into state
+      const items = fullPurchase.items.map((item: any) => ({
+        product_id: item.product_id,
+        product_name: item.product_name || 'Unknown Product',
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        total: item.quantity * item.unit_price
+      }));
+      setPurchaseItems(items);
+      console.log("Loaded items:", items.length);
+    } else {
+      setPurchaseItems([]);
+    }
+
     form.reset({
       poNumber: purchase.po_number,
-      supplierId: purchase.supplier_id,
-      subtotal: purchase.subtotal.toString(),
-      tax: purchase.tax.toString(),
-      total: purchase.total.toString(),
+      supplierId: purchase.supplier_id || "none",
+      subtotal: purchase.subtotal,
+      tax: purchase.tax,
+      total: purchase.total,
       paymentMethod: purchase.payment_method || "cash",
       status: purchase.status,
       paymentStatus: purchase.payment_status,
       itemsDescription: purchase.items_description || "",
     });
+
     setDialogOpen(true);
   };
 
@@ -537,7 +953,7 @@ export default function Purchases() {
     {
       key: 'total' as const,
       label: 'Total Amount',
-      render: (value: number) => <span className="font-semibold data-table">{formatPKR(value)}</span>,
+      render: (value: number) => <span className="font-semibold">{formatPKR(value)}</span>,
     },
     {
       key: 'items_description' as const,
@@ -581,7 +997,8 @@ export default function Purchases() {
     },
   ];
 
-  // Calculate summary stats
+  console.log(form.getValues("supplierId"), 'han 9999')
+
   const totalPurchases = filteredData.reduce((sum: number, purchase: Purchase) => sum + (purchase.total || 0), 0);
   const pendingOrders = filteredData.filter((purchase: Purchase) => purchase.status === 'pending');
   const deliveredOrders = filteredData.filter((purchase: Purchase) => purchase.status === 'delivered');
@@ -592,6 +1009,11 @@ export default function Purchases() {
     setSubtitle("Manage purchase orders and supplier relationships");
   }, []);
 
+  const handleEditProduct = (product: Product) => {
+    setEditingProduct(product);
+    setEditProductModalOpen(true);
+  };
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden" key={renderKey}>
       <main
@@ -599,7 +1021,6 @@ export default function Purchases() {
         className="flex-1 overflow-auto p-6"
         onScroll={handleScroll}
       >
-        {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
           <Card className="hover:shadow-md transition-shadow">
             <CardContent className="p-6">
@@ -663,229 +1084,281 @@ export default function Purchases() {
             <div className="flex items-center justify-between flex-wrap gap-4">
               <div className="flex items-center gap-2">
                 <CardTitle>Purchase Orders</CardTitle>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setShowShortcuts(true)}
-                  className="h-8 w-8"
-                  title="Keyboard Shortcuts"
-                >
+                <Button variant="ghost" size="icon" onClick={() => setShowShortcuts(true)} className="h-8 w-8" title="Keyboard Shortcuts">
                   <Keyboard className="h-4 w-4" />
                 </Button>
               </div>
               <div className="flex space-x-2">
-                <Button
-                  onClick={() => {
-                    localStorage.removeItem(STORAGE_KEYS.PURCHASES_PAGE);
-                    localStorage.removeItem(STORAGE_KEYS.PURCHASES_FILTERS);
-                    localStorage.removeItem(STORAGE_KEYS.PURCHASES_SCROLL_POSITION);
-                    setFilters({ startDate: "", endDate: "", supplierId: "", status: "" });
-                    setCurrentPage(1);
-                    isFirstLoadRef.current = true;
-                    setRenderKey(prev => prev + 1);
-                    toast({ title: "Reset", description: "All filters and pagination have been reset" });
-                    refetch();
-                  }}
-                  variant="outline"
-                  size="sm"
-                >
-                  Reset All
-                </Button>
-                <Button onClick={handleExport} variant="outline">
-                  Export CSV
-                </Button>
-                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button data-testid="button-new-purchase">
-                      <Plus className="h-4 w-4 mr-2" />
-                      New Purchase
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <Button onClick={() => {
+                  localStorage.removeItem(STORAGE_KEYS.PURCHASES_PAGE);
+                  localStorage.removeItem(STORAGE_KEYS.PURCHASES_FILTERS);
+                  localStorage.removeItem(STORAGE_KEYS.PURCHASES_SCROLL_POSITION);
+                  setFilters({ startDate: "", endDate: "", supplierId: "", status: "", search: "" });
+                  setCurrentPage(1);
+                  isFirstLoadRef.current = true;
+                  setRenderKey(prev => prev + 1);
+                  toast({ title: "Reset", description: "All filters and pagination have been reset" });
+                  refetch();
+                }} variant="outline" size="sm">Reset All</Button>
+                <Button onClick={handleExport} variant="outline">Export CSV</Button>
+
+                <Dialog open={dialogOpen} onOpenChange={(open) => {
+                  setDialogOpen(open);
+                  if (!open && !editingPurchase) {
+                    // Don't clear on close - keep draft for next time
+                    // The draft persists in localStorage
+                  }
+                }}>
+         <DialogTrigger asChild>
+  <Button 
+    data-testid="button-new-purchase"
+    onClick={() => {
+      setEditingPurchase(null);
+      // Load draft items for new purchase
+      const draftItems = loadDraftItems();
+      const draftForm = loadDraftFormData();
+      
+      if (draftItems.length > 0) {
+        setPurchaseItems(draftItems);
+      } else {
+        setPurchaseItems([]);
+      }
+      
+      if (draftForm && draftForm.poNumber) {
+        form.reset({
+          poNumber: draftForm.poNumber,
+          supplierId: draftForm.supplierId || "none",
+          subtotal: 0,
+          tax: draftForm.tax || 0,
+          total: 0,
+          paymentMethod: draftForm.paymentMethod || "cash",
+          status: draftForm.status || "pending",
+          paymentStatus: draftForm.paymentStatus || "pending",
+          itemsDescription: "",
+        });
+      } else {
+        form.reset({
+          poNumber: generatePONumber(),
+          supplierId: "none",
+          subtotal: 0,
+          tax: 0,
+          total: 0,
+          paymentMethod: "cash",
+          status: "pending",
+          paymentStatus: "pending",
+          itemsDescription: "",
+        });
+      }
+    }}
+  >
+    <Plus className="h-4 w-4 mr-2" />
+    New Purchase
+  </Button>
+</DialogTrigger>
+                  <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
-                      <DialogTitle>
-                        {editingPurchase ? "Edit Purchase Order" : "Create New Purchase Order"}
-                      </DialogTitle>
+                      <DialogTitle>{editingPurchase ? "Edit Purchase Order" : "Create New Purchase Order"}</DialogTitle>
                     </DialogHeader>
                     <Form {...form}>
                       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                        <FormField
-                          control={form.control}
-                          name="poNumber"
-                          render={({ field }) => (
+                        <div className="grid grid-cols-2 gap-4">
+                          <FormField control={form.control} name="poNumber" render={({ field }) => (
                             <FormItem>
                               <FormLabel>PO Number</FormLabel>
                               <div className="flex space-x-2">
-                                <FormControl>
-                                  <Input {...field} placeholder="PO-2024-001" data-testid="input-po-number" />
-                                </FormControl>
-                                <Button type="button" variant="outline" onClick={() => field.onChange(generatePONumber())}>
-                                  Generate
-                                </Button>
+                                <FormControl><Input {...field} placeholder="PO-2024-001" /></FormControl>
+                                <Button type="button" variant="outline" onClick={() => field.onChange(generatePONumber())}>Generate</Button>
                               </div>
                               <FormMessage />
                             </FormItem>
-                          )}
-                        />
+                          )} />
 
-                        <FormField
-                          control={form.control}
-                          name="supplierId"
-                          render={({ field }) => (
+
+                          <FormField control={form.control} name="supplierId" render={({ field }) => (
                             <FormItem>
                               <FormLabel>Supplier</FormLabel>
-                              <Select onValueChange={field.onChange} value={field.value}>
+                              <Select onValueChange={field.onChange} value={field.value || "none"}>
                                 <FormControl>
                                   <SelectTrigger>
                                     <SelectValue placeholder="Select supplier" />
                                   </SelectTrigger>
                                 </FormControl>
                                 <SelectContent>
+                                  <SelectItem value="none">None</SelectItem>
                                   {suppliers.map((supplier: Supplier) => (
-                                    <SelectItem key={supplier.id} value={supplier.id}>
-                                      {supplier.name}
-                                    </SelectItem>
+                                    <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
                               <FormMessage />
                             </FormItem>
-                          )}
-                        />
-
-                        <div className="grid grid-cols-2 gap-4">
-                          <FormField
-                            control={form.control}
-                            name="subtotal"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Subtotal (PKR)</FormLabel>
-                                <FormControl>
-                                  <Input type="number" step="0.01" {...field} />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={form.control}
-                            name="tax"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Tax (PKR)</FormLabel>
-                                <FormControl>
-                                  <Input type="number" step="0.01" {...field} />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
+                          )} />
                         </div>
 
-                        <FormField
-                          control={form.control}
-                          name="total"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Total (PKR)</FormLabel>
-                              <FormControl>
-                                <Input type="number" step="0.01" {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <FormLabel>Search & Add Products</FormLabel>
+                            <Button type="button" variant="outline" size="sm" onClick={() => setProductModalOpen(true)}>
+                              <Plus className="h-4 w-4 mr-1" /> Add New Product
+                            </Button>
+                          </div>
+                          <div className="relative">
+                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input placeholder="Type to search products by name, SKU, or barcode..." value={productSearchTerm} onChange={(e) => setProductSearchTerm(e.target.value)} className="pl-10" />
+                          </div>
 
-                        <FormField
-                          control={form.control}
-                          name="paymentMethod"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Payment Method</FormLabel>
-                              <Select onValueChange={field.onChange} value={field.value || "cash"}>
-                                <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select payment method" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  <SelectItem value="cash">Cash</SelectItem>
-                                  <SelectItem value="card">Card</SelectItem>
-                                  <SelectItem value="bank">Bank Transfer</SelectItem>
-                                  <SelectItem value="mobile">Mobile Wallet</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
+                          {productSearchTerm && productSearchResults.length > 0 && (
+                            <div className="mt-2 border rounded-lg max-h-60 overflow-y-auto">
+                              <div className="sticky top-0 bg-muted px-3 py-2 text-xs font-medium border-b">Found {productSearchResults.length} products</div>
+                              {productSearchResults.map(product => (
+                                <div key={product.id} className="flex justify-between items-center p-3 hover:bg-muted cursor-pointer border-b">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-3">
+                                      {product.image_url ? (
+                                        <img src={product.image_url} alt={product.name} className="w-10 h-10 object-cover rounded" />
+                                      ) : (
+                                        <div className="w-10 h-10 bg-muted rounded flex items-center justify-center"><Package className="h-5 w-5 text-muted-foreground" /></div>
+                                      )}
+                                      <div>
+                                        <p className="font-medium">{product.name}</p>
+                                        <p className="text-xs text-muted-foreground">SKU: {product.sku} | Stock: {product.stock}</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="text-right mr-3">
+                                    <p className="text-sm">Cost: {formatPKR(product.cost_price)}</p>
+                                    <p className="text-sm">Selling: {formatPKR(product.selling_price)}</p>
+                                  </div>
+                                  <div className="flex gap-1">
+                                    <Button size="sm" variant="outline" onClick={() => handleEditProduct(product)}><Edit className="h-3 w-3 mr-1" />Edit</Button>
+                                    <Button size="sm" onClick={() => addProductToPurchase(product)}>Add</Button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           )}
-                        />
 
-                        <FormField
-                          control={form.control}
-                          name="itemsDescription"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Items Purchased</FormLabel>
-                              <FormControl>
-                                <Textarea {...field} rows={4} placeholder="Describe items purchased (e.g. 10 boxes of smartphones, 5 laptops)" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
+                          {productSearchTerm && !isSearchingProducts && productSearchResults.length === 0 && (
+                            <div className="mt-2 p-3 text-center text-muted-foreground border rounded-lg">
+                              No products found. <Button variant="link" className="p-0 h-auto" onClick={() => setProductModalOpen(true)}>Add new product?</Button>
+                            </div>
                           )}
-                        />
+                        </div>
+
+                        {purchaseItems.length > 0 ? (
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <FormLabel>Purchase Items ({purchaseItems.length} items)</FormLabel>
+                              <Button type="button" variant="ghost" size="sm" onClick={() => { if (confirm("Clear all items?")) { setPurchaseItems([]); clearDraft(); } }}>Clear All</Button>
+                            </div>
+                            <div className="border rounded-lg mt-1 overflow-x-auto">
+                              <table className="w-full">
+                                <thead className="bg-muted/50">
+                                  <tr>
+                                    <th className="text-left p-2 text-sm">Product</th>
+                                    <th className="text-center p-2 text-sm w-24">Quantity</th>
+                                    <th className="text-right p-2 text-sm w-32">Unit Price</th>
+                                    <th className="text-right p-2 text-sm w-32">Total</th>
+                                    <th className="text-center p-2 text-sm w-16">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {purchaseItems.map(item => (
+                                    <tr key={item.product_id} className="border-t">
+                                      <td className="p-2 text-sm font-medium">{item.product_name}</td>
+                                      <td className="p-2 text-center">
+                                        <Input type="number" min="1" value={item.quantity} onChange={(e) => updatePurchaseItemQuantity(item.product_id, parseInt(e.target.value))} className="w-20 text-center" />
+                                      </td>
+                                      <td className="p-2 text-right">
+                                        <Input type="number" step="0.01" value={item.unit_price} onChange={(e) => updatePurchaseItemPrice(item.product_id, parseFloat(e.target.value))} className="w-28 text-right" />
+                                      </td>
+                                      <td className="p-2 text-right font-semibold">{formatPKR(item.total)}</td>
+                                      <td className="p-2 text-center">
+                                        <Button type="button" size="sm" variant="ghost" onClick={() => removePurchaseItem(item.product_id)} className="text-red-500">
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="border rounded-lg p-8 text-center text-muted-foreground">
+                            <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                            <p>No items added yet</p>
+                            <p className="text-sm">Type above to search and add products to your purchase</p>
+                          </div>
+                        )}
 
                         <div className="grid grid-cols-2 gap-4">
-                          <FormField
-                            control={form.control}
-                            name="status"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Status</FormLabel>
-                                <Select onValueChange={field.onChange} value={field.value}>
-                                  <FormControl>
-                                    <SelectTrigger>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent>
-                                    <SelectItem value="pending">Pending</SelectItem>
-                                    <SelectItem value="delivered">Delivered</SelectItem>
-                                    <SelectItem value="cancelled">Cancelled</SelectItem>
-                                    <SelectItem value="overdue">Overdue</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={form.control}
-                            name="paymentStatus"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Payment Status</FormLabel>
-                                <Select onValueChange={field.onChange} value={field.value}>
-                                  <FormControl>
-                                    <SelectTrigger>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent>
-                                    <SelectItem value="pending">Pending</SelectItem>
-                                    <SelectItem value="paid">Paid</SelectItem>
-                                    <SelectItem value="overdue">Overdue</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
+                          <FormField control={form.control} name="subtotal" render={({ field }) => (
+                            <FormItem><FormLabel>Subtotal (PKR)</FormLabel><FormControl><Input type="number" step="0.01" {...field} readOnly className="bg-muted" /></FormControl><FormMessage /></FormItem>
+                          )} />
+                          <FormField control={form.control} name="tax" render={({ field }) => (
+                            <FormItem><FormLabel>Tax (PKR)</FormLabel><FormControl><Input type="number" step="0.01" {...field} onChange={(e) => { field.onChange(e); const tax = parseFloat(e.target.value) || 0; form.setValue("total", calculateSubtotal() + tax); }} /></FormControl><FormMessage /></FormItem>
+                          )} />
                         </div>
+
+                        <FormField control={form.control} name="total" render={({ field }) => (
+                          <FormItem><FormLabel>Total (PKR)</FormLabel><FormControl><Input type="number" step="0.01" {...field} readOnly className="bg-muted font-bold" /></FormControl><FormMessage /></FormItem>
+                        )} />
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <FormField control={form.control} name="paymentMethod" render={({ field }) => (
+                            <FormItem><FormLabel>Payment Method</FormLabel><Select onValueChange={field.onChange} value={field.value || "cash"}><FormControl><SelectTrigger><SelectValue placeholder="Select payment method" /></SelectTrigger></FormControl><SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="card">Card</SelectItem><SelectItem value="bank">Bank Transfer</SelectItem><SelectItem value="mobile">Mobile Wallet</SelectItem></SelectContent></Select><FormMessage /></FormItem>
+                          )} />
+                          <div className="grid grid-cols-2 gap-4">
+                            <FormField control={form.control} name="status" render={({ field }) => (
+                              <FormItem><FormLabel>Status</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl><SelectContent><SelectItem value="pending">Pending</SelectItem><SelectItem value="delivered">Delivered</SelectItem><SelectItem value="cancelled">Cancelled</SelectItem><SelectItem value="overdue">Overdue</SelectItem></SelectContent></Select><FormMessage /></FormItem>
+                            )} />
+                            <FormField control={form.control} name="paymentStatus" render={({ field }) => (
+                              <FormItem><FormLabel>Payment Status</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl><SelectContent><SelectItem value="pending">Pending</SelectItem><SelectItem value="paid">Paid</SelectItem><SelectItem value="overdue">Overdue</SelectItem></SelectContent></Select><FormMessage /></FormItem>
+                            )} />
+                          </div>
+                        </div>
+
+                        <FormField control={form.control} name="itemsDescription" render={({ field }) => (
+                          <FormItem><FormLabel>Items Description (Auto-generated)</FormLabel><FormControl><Textarea {...field} rows={3} readOnly className="bg-muted" /></FormControl><FormMessage /></FormItem>
+                        )} />
 
                         <div className="flex justify-end space-x-2">
-                          <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              setDialogOpen(false);
+                            }}
+                          >
                             Cancel
                           </Button>
+
+                          {/* WhatsApp Share Button */}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="bg-green-500 hover:bg-green-600 text-white"
+                            onClick={shareViaWhatsApp}
+                            disabled={purchaseItems.length === 0 || !form.getValues("supplierId") || form.getValues("supplierId") === "none"}
+                          >
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              className="mr-2"
+                            >
+                              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                            </svg>
+                            Share via WhatsApp
+                          </Button>
+
                           <Button type="submit" disabled={createPurchaseMutation.isPending || updatePurchaseMutation.isPending}>
                             {createPurchaseMutation.isPending || updatePurchaseMutation.isPending ? "Saving..." : editingPurchase ? "Update Purchase" : "Create Purchase"}
                           </Button>
@@ -898,74 +1371,26 @@ export default function Purchases() {
             </div>
           </CardHeader>
           <CardContent>
-            {/* Filters */}
-          {/* Filters */}
-<div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-    <Input
-        placeholder="Search by PO number or items... (Ctrl+F)"
-        value={filters.search || ""}
-        onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-    />
-    <Input
-        type="date"
-        placeholder="Start Date"
-        value={filters.startDate}
-        onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
-    />
-    <Input
-        type="date"
-        placeholder="End Date"
-        value={filters.endDate}
-        onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
-    />
-    <Select
-        value={filters.supplierId || "all"}
-        onValueChange={(value) => setFilters({ ...filters, supplierId: value === "all" ? "" : value })}
-    >
-        <SelectTrigger>
-            <SelectValue placeholder="All Suppliers" />
-        </SelectTrigger>
-        <SelectContent>
-            <SelectItem value="all">All Suppliers</SelectItem>
-            {suppliers.map((supplier: Supplier) => (
-                <SelectItem key={supplier.id} value={supplier.id}>
-                    {supplier.name}
-                </SelectItem>
-            ))}
-        </SelectContent>
-    </Select>
-    <Select
-        value={filters.status || "all"}
-        onValueChange={(value) => setFilters({ ...filters, status: value === "all" ? "" : value })}
-    >
-        <SelectTrigger>
-            <SelectValue placeholder="All Status" />
-        </SelectTrigger>
-        <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="delivered">Delivered</SelectItem>
-            <SelectItem value="cancelled">Cancelled</SelectItem>
-            <SelectItem value="overdue">Overdue</SelectItem>
-        </SelectContent>
-    </Select>
-</div>
-
-            {/* Results count */}
-            <div className="mb-4 text-sm text-muted-foreground">
-              {filteredData.length > 0 ? (
-                `Showing ${startIndex} to ${endIndex} of ${filteredData.length} results`
-              ) : (
-                !isLoading && "No results found"
-              )}
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+              <Input placeholder="Search PO number or items... (Ctrl+F)" value={filters.search || ""} onChange={(e) => setFilters({ ...filters, search: e.target.value })} />
+              <Input type="date" placeholder="Start Date" value={filters.startDate} onChange={(e) => setFilters({ ...filters, startDate: e.target.value })} />
+              <Input type="date" placeholder="End Date" value={filters.endDate} onChange={(e) => setFilters({ ...filters, endDate: e.target.value })} />
+              <Select value={filters.supplierId || "all"} onValueChange={(value) => setFilters({ ...filters, supplierId: value === "all" ? "" : value })}>
+                <SelectTrigger><SelectValue placeholder="All Suppliers" /></SelectTrigger>
+                <SelectContent><SelectItem value="all">All Suppliers</SelectItem>{suppliers.map((supplier: Supplier) => (<SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>))}</SelectContent>
+              </Select>
+              <Select value={filters.status || "all"} onValueChange={(value) => setFilters({ ...filters, status: value === "all" ? "" : value })}>
+                <SelectTrigger><SelectValue placeholder="All Status" /></SelectTrigger>
+                <SelectContent><SelectItem value="all">All Status</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="delivered">Delivered</SelectItem><SelectItem value="cancelled">Cancelled</SelectItem><SelectItem value="overdue">Overdue</SelectItem></SelectContent>
+              </Select>
             </div>
 
-            {/* Data Table */}
+            <div className="mb-4 text-sm text-muted-foreground">
+              {filteredData.length > 0 ? `Showing ${startIndex} to ${endIndex} of ${filteredData.length} results` : (!isLoading && "No results found")}
+            </div>
+
             {isLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                <span className="ml-2 text-muted-foreground">Loading purchases...</span>
-              </div>
+              <div className="flex items-center justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div><span className="ml-2 text-muted-foreground">Loading purchases...</span></div>
             ) : (
               <>
                 <div className="border rounded-lg overflow-hidden">
@@ -973,86 +1398,38 @@ export default function Purchases() {
                     <table className="w-full">
                       <thead className="bg-muted/50 border-b">
                         <tr>
-                          {columns.map((column) => (
-                            <th key={column.key} className="text-left p-3 font-medium text-sm">
-                              {column.label}
-                            </th>
-                          ))}
+                          {columns.map((column) => (<th key={column.key} className="text-left p-3 font-medium text-sm">{column.label}</th>))}
                         </tr>
                       </thead>
                       <tbody>
-                        {paginatedData.length > 0 ? (
-                          paginatedData.map((purchase: any, index: number) => (
-                            <tr key={purchase.id} className={`border-b hover:bg-muted/30 transition-colors ${index % 2 === 0 ? 'bg-background' : 'bg-muted/10'}`}>
-                              {columns.map((column) => (
-                                <td key={column.key} className="p-3">
-                                  {column.render(purchase[column.key], purchase)}
-                                </td>
-                              ))}
-                            </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td colSpan={columns.length} className="text-center p-8 text-muted-foreground">
-                              No purchases found.
-                            </td>
+                        {paginatedData.length > 0 ? paginatedData.map((purchase: any, index: number) => (
+                          <tr key={purchase.id} className={`border-b hover:bg-muted/30 transition-colors ${index % 2 === 0 ? 'bg-background' : 'bg-muted/10'}`}>
+                            {columns.map((column) => (<td key={column.key} className="p-3">{column.render(purchase[column.key], purchase)}</td>))}
                           </tr>
+                        )) : (
+                          <tr><td colSpan={columns.length} className="text-center p-8 text-muted-foreground">No purchases found.</td></tr>
                         )}
                       </tbody>
                     </table>
                   </div>
                 </div>
 
-                {/* Pagination Controls */}
                 {totalPages > 1 && (
                   <div className="flex items-center justify-between mt-4 pt-4 border-t">
-                    <div className="text-sm text-muted-foreground">
-                      Page {currentPage} of {totalPages}
-                    </div>
+                    <div className="text-sm text-muted-foreground">Page {currentPage} of {totalPages}</div>
                     <div className="flex space-x-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                        disabled={currentPage === 1}
-                      >
-                        <ChevronLeft className="h-4 w-4 mr-1" />
-                        Previous
-                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}><ChevronLeft className="h-4 w-4 mr-1" />Previous</Button>
                       <div className="flex space-x-1">
                         {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                           let pageNum;
-                          if (totalPages <= 5) {
-                            pageNum = i + 1;
-                          } else if (currentPage <= 3) {
-                            pageNum = i + 1;
-                          } else if (currentPage >= totalPages - 2) {
-                            pageNum = totalPages - 4 + i;
-                          } else {
-                            pageNum = currentPage - 2 + i;
-                          }
-                          return (
-                            <Button
-                              key={pageNum}
-                              variant={currentPage === pageNum ? "default" : "outline"}
-                              size="sm"
-                              onClick={() => setCurrentPage(pageNum)}
-                              className="w-10"
-                            >
-                              {pageNum}
-                            </Button>
-                          );
+                          if (totalPages <= 5) { pageNum = i + 1; }
+                          else if (currentPage <= 3) { pageNum = i + 1; }
+                          else if (currentPage >= totalPages - 2) { pageNum = totalPages - 4 + i; }
+                          else { pageNum = currentPage - 2 + i; }
+                          return (<Button key={pageNum} variant={currentPage === pageNum ? "default" : "outline"} size="sm" onClick={() => setCurrentPage(pageNum)} className="w-10">{pageNum}</Button>);
                         })}
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                        disabled={currentPage === totalPages}
-                      >
-                        Next
-                        <ChevronRight className="h-4 w-4 ml-1" />
-                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>Next<ChevronRight className="h-4 w-4 ml-1" /></Button>
                     </div>
                   </div>
                 )}
@@ -1062,19 +1439,18 @@ export default function Purchases() {
         </Card>
       </main>
 
-      <KeyboardShortcutsModal
-        open={showShortcuts}
-        onOpenChange={setShowShortcuts}
-        title="Purchases Page Shortcuts"
-        shortcuts={[
-          { key: "Ctrl + A", description: "New Purchase Order" },
-          { key: "Ctrl + E", description: "Export Purchases" },
-          { key: "Ctrl + C", description: "Clear All Filters" },
-          { key: "Ctrl + F", description: "Focus Search Bar" },
-          { key: "←", description: "Previous Page" },
-          { key: "→", description: "Next Page" },
-        ]}
-      />
+      <KeyboardShortcutsModal open={showShortcuts} onOpenChange={setShowShortcuts} title="Purchases Page Shortcuts" shortcuts={[
+        { key: "Ctrl + A", description: "New Purchase Order" },
+        { key: "Ctrl + E", description: "Export Purchases" },
+        { key: "Ctrl + C", description: "Clear All Filters" },
+        { key: "Ctrl + F", description: "Focus Search Bar" },
+        { key: "←", description: "Previous Page" },
+        { key: "→", description: "Next Page" },
+      ]} />
+
+      <ProductModal open={productModalOpen} onOpenChange={setProductModalOpen} onProductCreated={() => { toast({ title: "Product Created", description: "Product has been added. You can now add it to your purchase." }); setProductModalOpen(false); }} />
+
+      <ProductModal open={editProductModalOpen} onOpenChange={setEditProductModalOpen} editingProduct={editingProduct} onProductUpdated={() => { toast({ title: "Product Updated", description: "Product has been updated." }); setEditProductModalOpen(false); setEditingProduct(null); if (productSearchTerm) { searchProducts(productSearchTerm); } }} />
     </div>
   );
 }

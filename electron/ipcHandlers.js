@@ -1563,18 +1563,52 @@ export function setupIpcHandlers() {
     });
 
     // ========== PURCHASES ==========
+    // ========== PURCHASES WITH ITEMS ==========
     ipcMain.handle('db:getPurchases', async (event, filters = {}) => {
         try {
             const db = getDb();
-            let query = 'SELECT * FROM purchases WHERE 1=1';
+            let query = `
+            SELECT p.*, s.name as supplier_name 
+            FROM purchases p
+            LEFT JOIN suppliers s ON p.supplier_id = s.id
+            WHERE 1=1
+        `;
             const params = [];
-            if (filters.startDate) { query += ' AND created_at >= ?'; params.push(filters.startDate); }
-            if (filters.endDate) { query += ' AND created_at <= ?'; params.push(filters.endDate); }
-            if (filters.supplierId) { query += ' AND supplier_id = ?'; params.push(filters.supplierId); }
-            query += ' ORDER BY created_at DESC';
+
+            if (filters.startDate) {
+                query += ' AND DATE(p.created_at) >= DATE(?)';
+                params.push(filters.startDate);
+            }
+            if (filters.endDate) {
+                query += ' AND DATE(p.created_at) <= DATE(?)';
+                params.push(filters.endDate);
+            }
+            if (filters.supplierId) {
+                query += ' AND p.supplier_id = ?';
+                params.push(filters.supplierId);
+            }
+            if (filters.status) {
+                query += ' AND p.status = ?';
+                params.push(filters.status);
+            }
+
+            query += ' ORDER BY p.created_at DESC';
             const purchases = db.prepare(query).all(...params);
+
+            // Get items for each purchase
+            for (const purchase of purchases) {
+                const items = db.prepare(`
+                SELECT pi.*, pr.name as product_name, pr.sku, pr.barcode
+                FROM purchase_items pi
+                LEFT JOIN products pr ON pi.product_id = pr.id
+                WHERE pi.purchase_id = ?
+            `).all(purchase.id);
+                purchase.items = items;
+            }
+
             return { success: true, data: purchases };
         } catch (error) {
+            console.error('Get purchases error:', error);
             return { success: false, error: error.message };
         }
     });
@@ -1582,69 +1616,219 @@ export function setupIpcHandlers() {
     ipcMain.handle('db:getPurchaseById', async (event, id) => {
         try {
             const db = getDb();
-            const purchase = db.prepare('SELECT * FROM purchases WHERE id = ?').get(id);
+            const purchase = db.prepare(`
+            SELECT p.*, s.name as supplier_name, s.phone as supplier_phone, s.email as supplier_email
+            FROM purchases p
+            LEFT JOIN suppliers s ON p.supplier_id = s.id
+            WHERE p.id = ?
+        `).get(id);
+
+            if (purchase) {
+                const items = db.prepare(`
+                SELECT pi.*, pr.name as product_name, pr.sku, pr.barcode, pr.selling_price as current_selling_price
+                FROM purchase_items pi
+                LEFT JOIN products pr ON pi.product_id = pr.id
+                WHERE pi.purchase_id = ?
+            `).all(id);
+                purchase.items = items;
+            }
+
             return { success: true, data: purchase };
         } catch (error) {
+            console.error('Get purchase by id error:', error);
             return { success: false, error: error.message };
         }
     });
+
     ipcMain.handle('db:createPurchase', async (event, purchaseData) => {
+        const db = getDb();
+        const transaction = db.transaction(() => {
+            try {
+                const id = crypto.randomUUID();
+                const poNumber = purchaseData.poNumber || `PO-${Date.now()}`;
+
+                // Insert purchase
+                const stmt = db.prepare(`
+                INSERT INTO purchases (
+                    id, po_number, supplier_id, subtotal, tax, total, 
+                    status, account_number, payment_status, payment_method, 
+                    items_description, user_id, shop_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+
+                stmt.run(
+                    id,
+                    poNumber,
+                    purchaseData.supplierId,
+                    purchaseData.subtotal,
+                    purchaseData.tax || 0,
+                    purchaseData.total,
+                    purchaseData.status || 'pending',
+                    purchaseData.accountNumber || null,
+                    purchaseData.paymentStatus || 'pending',
+                    purchaseData.paymentMethod || 'cash',
+                    purchaseData.itemsDescription || null,
+                    purchaseData.user_id,
+                    purchaseData.shop_id
+                );
+
+                // Insert purchase items and update product stock
+                if (purchaseData.items && purchaseData.items.length > 0) {
+                    const itemStmt = db.prepare(`
+                    INSERT INTO purchase_items (id, purchase_id, product_id, quantity, unit_price, total)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                `);
+
+                    const updateProductStmt = db.prepare(`
+                    UPDATE products SET 
+                        stock = stock + ?,
+                        cost_price = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                `);
+
+                    for (const item of purchaseData.items) {
+                        const itemId = crypto.randomUUID();
+                        itemStmt.run(
+                            itemId,
+                            id,
+                            item.product_id,
+                            item.quantity,
+                            item.unit_price,
+                            item.quantity * item.unit_price
+                        );
+
+                        // Update product stock and cost price (using weighted average)
+                        const product = db.prepare('SELECT stock, cost_price FROM products WHERE id = ?').get(item.product_id);
+                        if (product) {
+                            const newStock = product.stock + item.quantity;
+                            // Weighted average cost price
+                            const newCostPrice = ((product.stock * product.cost_price) + (item.quantity * item.unit_price)) / newStock;
+                            updateProductStmt.run(item.quantity, newCostPrice, item.product_id);
+                        }
+                    }
+                }
+
+                const newPurchase = db.prepare(`
+                SELECT p.*, s.name as supplier_name 
+                FROM purchases p
+                LEFT JOIN suppliers s ON p.supplier_id = s.id
+                WHERE p.id = ?
+            `).get(id);
+
+                if (newPurchase) {
+                    const items = db.prepare(`
+                    SELECT pi.*, pr.name as product_name
+                    FROM purchase_items pi
+                    LEFT JOIN products pr ON pi.product_id = pr.id
+                    WHERE pi.purchase_id = ?
+                `).all(id);
+                    newPurchase.items = items;
+                }
+
+                return { success: true, data: newPurchase };
+            } catch (error) {
+                console.error('Create purchase transaction error:', error);
+                throw error;
+            }
+        });
+
         try {
-            const db = getDb();
-            const id = crypto.randomUUID();
-            const poNumber = purchaseData.poNumber || `PO-${Date.now()}`;
-            const stmt = db.prepare(`INSERT INTO purchases (id, po_number, supplier_id, subtotal, tax, total, status, account_number, payment_status, payment_method, items_description, user_id, shop_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-            stmt.run(
-                id,
-                poNumber,
-                purchaseData.supplierId,
-                purchaseData.subtotal,
-                purchaseData.tax || 0,
-                purchaseData.total,
-                purchaseData.status || 'pending',
-                purchaseData.accountNumber || null,
-                purchaseData.paymentStatus || 'pending',
-                purchaseData.paymentMethod || 'cash',
-                purchaseData.itemsDescription || null,
-                purchaseData.user_id,  // Changed from userId to user_id
-                purchaseData.shop_id   // Changed from shopId to shop_id
-            );
-            const newPurchase = db.prepare('SELECT * FROM purchases WHERE id = ?').get(id);
-            return { success: true, data: newPurchase };
+            const result = transaction();
+            return result;
         } catch (error) {
             console.error('Create purchase error:', error);
             return { success: false, error: error.message };
         }
     });
 
-    ipcMain.handle('db:updatePurchase', async (event, id, purchaseData) => {
+    // Add product search endpoint for purchase modal
+    ipcMain.handle('db:searchProductsForPurchase', async (event, searchTerm) => {
         try {
             const db = getDb();
-            const updates = [];
-            const params = [];
+            const query = `
+            SELECT id, name, sku, barcode, selling_price, cost_price, stock 
+            FROM products 
+            WHERE is_active = 1 
+            AND (name LIKE ? OR sku LIKE ? OR barcode LIKE ?)
+            ORDER BY name
+            LIMIT 50
+        `;
+            const searchPattern = `%${searchTerm}%`;
+            const products = db.prepare(query).all(searchPattern, searchPattern, searchPattern);
+            return { success: true, data: products };
+        } catch (error) {
+            console.error('Search products error:', error);
+            return { success: false, error: error.message };
+        }
+    });
 
-            if (purchaseData.status !== undefined) { updates.push('status = ?'); params.push(purchaseData.status); }
-            if (purchaseData.payment_status !== undefined) { updates.push('payment_status = ?'); params.push(purchaseData.payment_status); }
-            if (purchaseData.payment_method !== undefined) { updates.push('payment_method = ?'); params.push(purchaseData.payment_method); }
-            if (purchaseData.items_description !== undefined) { updates.push('items_description = ?'); params.push(purchaseData.items_description); }
-            if (purchaseData.subtotal !== undefined) { updates.push('subtotal = ?'); params.push(purchaseData.subtotal); }
-            if (purchaseData.tax !== undefined) { updates.push('tax = ?'); params.push(purchaseData.tax); }
-            if (purchaseData.total !== undefined) { updates.push('total = ?'); params.push(purchaseData.total); }
-            if (purchaseData.supplier_id !== undefined) { updates.push('supplier_id = ?'); params.push(purchaseData.supplier_id); } // Add this
+    // In your main electron file, update the existing updatePurchase handler:
+    ipcMain.handle('db:updatePurchase', async (event, id, purchaseData) => {
+        const db = getDb();
+        const transaction = db.transaction(() => {
+            try {
+                // Update purchase basic info
+                const updates = [];
+                const params = [];
 
-            if (updates.length === 0) return { success: false, error: 'No fields to update' };
+                if (purchaseData.status !== undefined) { updates.push('status = ?'); params.push(purchaseData.status); }
+                if (purchaseData.payment_status !== undefined) { updates.push('payment_status = ?'); params.push(purchaseData.payment_status); }
+                if (purchaseData.payment_method !== undefined) { updates.push('payment_method = ?'); params.push(purchaseData.payment_method); }
+                if (purchaseData.items_description !== undefined) { updates.push('items_description = ?'); params.push(purchaseData.items_description); }
+                if (purchaseData.subtotal !== undefined) { updates.push('subtotal = ?'); params.push(purchaseData.subtotal); }
+                if (purchaseData.tax !== undefined) { updates.push('tax = ?'); params.push(purchaseData.tax); }
+                if (purchaseData.total !== undefined) { updates.push('total = ?'); params.push(purchaseData.total); }
+                if (purchaseData.supplier_id !== undefined) { updates.push('supplier_id = ?'); params.push(purchaseData.supplier_id); }
 
-            updates.push('updated_at = CURRENT_TIMESTAMP');
-            params.push(id);
+                if (updates.length > 0) {
+                    updates.push('updated_at = CURRENT_TIMESTAMP');
+                    params.push(id);
+                    const query = `UPDATE purchases SET ${updates.join(', ')} WHERE id = ?`;
+                    db.prepare(query).run(...params);
+                }
 
-            const query = `UPDATE purchases SET ${updates.join(', ')} WHERE id = ?`;
-            const result = db.prepare(query).run(...params);
-            return { success: result.changes > 0 };
+                // UPDATE ITEMS IF PROVIDED
+                if (purchaseData.items && purchaseData.items.length > 0) {
+                    // Delete old items
+                    db.prepare('DELETE FROM purchase_items WHERE purchase_id = ?').run(id);
+
+                    // Insert new items
+                    const itemStmt = db.prepare(`
+                    INSERT INTO purchase_items (id, purchase_id, product_id, quantity, unit_price, total)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                `);
+
+                    for (const item of purchaseData.items) {
+                        const itemId = crypto.randomUUID();
+                        itemStmt.run(
+                            itemId,
+                            id,
+                            item.product_id,
+                            item.quantity,
+                            item.unit_price,
+                            item.quantity * item.unit_price
+                        );
+                    }
+                }
+
+                return { success: true };
+            } catch (error) {
+                console.error('Update purchase transaction error:', error);
+                throw error;
+            }
+        });
+
+        try {
+            const result = transaction();
+            return result;
         } catch (error) {
             console.error('Update purchase error:', error);
             return { success: false, error: error.message };
         }
     });
+
+
 
     ipcMain.handle('db:deletePurchase', async (event, id) => {
         try {

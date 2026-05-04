@@ -220,6 +220,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
         const result = await ipcRenderer.invoke('db:createPurchase', purchaseData);
         return result.success ? result.data : null;
     },
+    searchProductsForPurchase: async (searchTerm) => {
+        const result = await ipcRenderer.invoke('db:searchProductsForPurchase', searchTerm);
+        return result.success ? result.data : [];
+    },
     updatePurchase: async (id, purchaseData) => {
         const result = await ipcRenderer.invoke('db:updatePurchase', id, purchaseData);
         return result.success;

@@ -73,6 +73,7 @@ type ElectronAPI = {
 
     // Purchases
     getPurchases: () => Promise<any>;
+    getPurchaseById: (id: string) => Promise<any>;  // ADD THIS LINE
     createPurchase: (data: any) => Promise<any>;
     updatePurchase: (id: string, data: any) => Promise<any>;
     deletePurchase: (id: string) => Promise<any>;
@@ -241,10 +242,15 @@ const electronAPI: ElectronAPI = {
     },
     // Purchases
     getPurchases: () => window.electronAPI.getPurchases(),
+    getPurchaseById: (id) => window.electronAPI.getPurchaseById(id),  // ADD THIS LINE
     createPurchase: (data) => window.electronAPI.createPurchase(data),
     updatePurchase: (id, data) => window.electronAPI.updatePurchase(id, data),
     deletePurchase: (id) => window.electronAPI.deletePurchase(id),
-
+    // Add this to the ElectronAPI interface and implementation:
+    searchProductsForPurchase: async (searchTerm: string) => {
+        const result = await window.electronAPI.searchProductsForPurchase(searchTerm);
+        return result.success ? result.data : [];
+    },
     // Expenses
     getExpenses: () => window.electronAPI.getExpenses(),
     createExpense: (data) => window.electronAPI.createExpense(data),
