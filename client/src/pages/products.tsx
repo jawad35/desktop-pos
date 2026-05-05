@@ -23,7 +23,7 @@ import { formatPKR } from "@/lib/currency";
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Edit, Trash2, Upload,
-  ChevronRight, ChevronLeft, RefreshCw, Keyboard,
+  ChevronRight, ChevronLeft, RefreshCw, Keyboard, RefreshCcw,
 } from "lucide-react";
 import { Product, Category, Brand, Supplier } from "@/types/api";
 import { useHeader } from "@/contexts/HeaderContext";
@@ -40,6 +40,20 @@ const STORAGE_KEYS = {
   PRODUCTS_PAGE: 'products_current_page',
   PRODUCTS_FILTERS: 'products_filters',
   PRODUCTS_SCROLL_POSITION: 'products_scroll_position'
+};
+
+// Generate unique SKU
+const generateUniqueSKU = () => {
+  const timestamp = Date.now().toString().slice(-8);
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  return `SKU-${timestamp}-${random}`;
+};
+
+// Generate unique Barcode (shorter)
+const generateUniqueBarcode = () => {
+  const timestamp = Date.now().toString().slice(-6);
+  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+  return `BC-${timestamp}${random}`;
 };
 
 const productFormSchema = z.object({
@@ -82,7 +96,8 @@ export default function Products() {
   const [selectedImages, setSelectedImages] = useState<File[]>([]);
   const [existingImages, setExistingImages] = useState<string[]>([]);
   const [showShortcuts, setShowShortcuts] = useState(false);
-
+  const [isCheckingSku, setIsCheckingSku] = useState(false);
+  const [isCheckingBarcode, setIsCheckingBarcode] = useState(false);
   // Load saved state
   const loadSavedPage = () => {
     try {
@@ -92,6 +107,22 @@ export default function Products() {
     } catch (error) {
       return 1;
     }
+  };
+
+  const resetForm = () => {
+    const newSKU = generateUniqueSKU();
+    const newBarcode = generateUniqueBarcode();
+    form.reset({
+      name: "", sku: newSKU, barcode: newBarcode, description: "", categoryId: "", brandId: "", supplierId: "",
+      costPrice: "", sellingPrice: "", stock: "0", minStock: "0", isActive: true, productType: "physical",
+      taxRate: "0", discount: "0", unitOfMeasure: "piece", weight: "0", colors: "", sizes: "",
+      material: "", tags: "", warranty: "0", expiryDate: "", manufacturer: "", countryOfOrigin: "",
+    });
+    setBarcodeValue(newBarcode);
+    setBarcodeQuantity(1); // Reset quantity
+    setSelectedImages([]);
+    setExistingImages([]);
+    setEditingProduct(null);
   };
 
   const loadSavedFilters = () => {
@@ -157,63 +188,96 @@ export default function Products() {
     setSubtitle("Manage your product inventory");
   }, []);
 
-  // Fetch products
-  const { isLoading, refetch } = useQuery<Product[]>({
-    queryKey: ["products", location],
-    queryFn: async () => {
-      const result = await api.getProducts();
-      let allProducts: Product[] = [];
+ // Fetch products - always get fresh data
+const { isLoading, refetch } = useQuery<Product[]>({
+  queryKey: ["products", location],
+  queryFn: async () => {
+    console.log("Fetching fresh products data...");
+    const result = await api.getProducts();
+    let allProducts: Product[] = [];
 
-      if (Array.isArray(result)) {
-        allProducts = result;
-      } else if (result?.success && Array.isArray(result.data)) {
-        allProducts = result.data;
-      }
+    if (Array.isArray(result)) {
+      allProducts = result;
+    } else if (result?.success && Array.isArray(result.data)) {
+      allProducts = result.data;
+    }
 
-      allProducts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      setAllProductsData(allProducts);
-      setRenderKey(prev => prev + 1);
-      return allProducts;
-    },
-    refetchOnMount: true,
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
-    staleTime: 0,
-    cacheTime: 0,
-  });
+    allProducts.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    setAllProductsData(allProducts);
+    setRenderKey(prev => prev + 1);
+    return allProducts;
+  },
+  refetchOnMount: true,        // Refetch when component mounts
+  refetchOnWindowFocus: true,  // Refetch when window gains focus
+  refetchOnReconnect: true,    // Refetch when reconnecting
+  staleTime: 0,                // Data is immediately stale
+  gcTime: 0,                   // Don't cache (formerly cacheTime)
+});
 
-  // Fetch categories
-  const { data: categories = [] } = useQuery<Category[]>({
-    queryKey: ["categories"],
-    queryFn: async () => {
-      const result = await api.getCategories();
-      if (Array.isArray(result)) return result;
-      if (result?.success && Array.isArray(result.data)) return result.data;
-      return [];
-    },
-  });
+// Fetch categories - always get fresh data
+const { data: categories = [], refetch: refetchCategories } = useQuery<Category[]>({
+  queryKey: ["categories"],
+  queryFn: async () => {
+    console.log("Fetching fresh categories data...");
+    const result = await api.getCategories(true); // true to include inactive
+    if (Array.isArray(result)) return result;
+    if (result?.success && Array.isArray(result.data)) return result.data;
+    return [];
+  },
+  refetchOnMount: true,
+  refetchOnWindowFocus: true,
+  staleTime: 0,
+  gcTime: 0,
+});
 
-  // Fetch brands
-  const { data: brands = [] } = useQuery<Brand[]>({
-    queryKey: ["brands"],
-    queryFn: async () => {
-      const result = await api.getBrands();
-      if (Array.isArray(result)) return result;
-      if (result?.success && Array.isArray(result.data)) return result.data;
-      return [];
-    },
-  });
+// Fetch brands - always get fresh data
+const { data: brands = [], refetch: refetchBrands } = useQuery<Brand[]>({
+  queryKey: ["brands"],
+  queryFn: async () => {
+    console.log("Fetching fresh brands data...");
+    const result = await api.getBrands(true);
+    if (Array.isArray(result)) return result;
+    if (result?.success && Array.isArray(result.data)) return result.data;
+    return [];
+  },
+  refetchOnMount: true,
+  refetchOnWindowFocus: true,
+  staleTime: 0,
+  gcTime: 0,
+});
 
-  // Fetch suppliers
-  const { data: suppliers = [] } = useQuery<Supplier[]>({
-    queryKey: ["suppliers"],
-    queryFn: async () => {
-      const result = await api.getSuppliers();
-      if (Array.isArray(result)) return result;
-      if (result?.success && Array.isArray(result.data)) return result.data;
-      return [];
-    },
-  });
+// Fetch suppliers - always get fresh data
+const { data: suppliers = [], refetch: refetchSuppliers } = useQuery<Supplier[]>({
+  queryKey: ["suppliers"],
+  queryFn: async () => {
+    console.log("Fetching fresh suppliers data...");
+    const result = await api.getSuppliers();
+    if (Array.isArray(result)) return result;
+    if (result?.success && Array.isArray(result.data)) return result.data;
+    return [];
+  },
+  refetchOnMount: true,
+  refetchOnWindowFocus: true,
+  staleTime: 0,
+  gcTime: 0,
+});
+
+  // Check if SKU exists (excluding current product when editing)
+  const checkSkuExists = async (sku: string, excludeId?: string) => {
+    const existingProduct = allProductsData.find(p =>
+      p.sku === sku && p.id !== excludeId
+    );
+    return !!existingProduct;
+  };
+
+  // Check if Barcode exists (excluding current product when editing)
+  const checkBarcodeExists = async (barcode: string, excludeId?: string) => {
+    if (!barcode) return false;
+    const existingProduct = allProductsData.find(p =>
+      p.barcode === barcode && p.id !== excludeId
+    );
+    return !!existingProduct;
+  };
 
   // Apply filters
   const filteredData = useMemo(() => {
@@ -364,13 +428,17 @@ export default function Products() {
         e.preventDefault();
         e.stopPropagation();
         setEditingProduct(null);
+        const newSKU = generateUniqueSKU();
+        const newBarcode = generateUniqueBarcode();
         form.reset({
-          name: "", sku: "", barcode: "", description: "", categoryId: "", brandId: "", supplierId: "",
+          name: "", sku: newSKU, barcode: newBarcode, description: "", categoryId: "", brandId: "", supplierId: "",
           costPrice: "", sellingPrice: "", stock: "0", minStock: "0", isActive: true, productType: "physical",
           taxRate: "0", discount: "0", unitOfMeasure: "piece", weight: "0", colors: "", sizes: "",
           material: "", tags: "", warranty: "0", expiryDate: "", manufacturer: "", countryOfOrigin: "",
         });
+        setBarcodeValue(newBarcode);
         setSelectedImages([]);
+        setExistingImages([]);
         setDialogOpen(true);
         return;
       }
@@ -528,8 +596,8 @@ export default function Products() {
     resolver: zodResolver(productFormSchema),
     defaultValues: {
       name: "",
-      sku: "",
-      barcode: "",
+      sku: generateUniqueSKU(),
+      barcode: generateUniqueBarcode(),
       description: "",
       categoryId: "",
       brandId: "",
@@ -606,43 +674,40 @@ export default function Products() {
     };
   };
 
-  // Create mutation
-  const createProductMutation = useMutation({
-    mutationFn: async (data: any) => {
-      const productWithIds = { ...data, userId: 'system', shopId: 'default' };
-      const result = await api.createProduct(productWithIds);
-      return result;
-    },
-    onSuccess: () => {
-      toast({ title: "Product Created" });
-      refetch();
-      setDialogOpen(false);
-      form.reset();
-      setSelectedImages([]);
-    },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
-  });
+const createProductMutation = useMutation({
+  mutationFn: async (data: any) => {
+    const productWithIds = { ...data, userId: 'system', shopId: 'default' };
+    const result = await api.createProduct(productWithIds);
+    return result;
+  },
+  onSuccess: () => {
+    toast({ title: "Product Created", description: "Product has been added successfully" });
+    refetch();
+    resetForm(); // Clear form after successful creation
+    setDialogOpen(false);
+  },
+  onError: (error: Error) => {
+    toast({ title: "Error", description: error.message, variant: "destructive" });
+  },
+});
 
   // Update mutation
   const updateProductMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: any }) => {
-      const result = await api.updateProduct(id, data);
-      return result;
-    },
-    onSuccess: () => {
-      toast({ title: "Product Updated" });
-      refetch();
-      setDialogOpen(false);
-      setEditingProduct(null);
-      form.reset();
-      setSelectedImages([]);
-    },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
-  });
+  mutationFn: async ({ id, data }: { id: string; data: any }) => {
+    const result = await api.updateProduct(id, data);
+    return result;
+  },
+  onSuccess: () => {
+    toast({ title: "Product Updated", description: "Product has been updated successfully" });
+    refetch();
+    resetForm(); // Clear form after successful update
+    setDialogOpen(false);
+  },
+  onError: (error: Error) => {
+    toast({ title: "Error", description: error.message, variant: "destructive" });
+  },
+});
+
 
   // Disable mutation
   const disableProductMutation = useMutation({
@@ -686,7 +751,37 @@ export default function Products() {
     }
   };
 
-  const onSubmit = (data: ProductFormValues) => {
+  const validateSku = async (sku: string) => {
+    if (!sku) return "SKU is required";
+    const exists = await checkSkuExists(sku, editingProduct?.id);
+    if (exists) return "SKU already exists. Please use a unique SKU.";
+    return true;
+  };
+
+  const validateBarcode = async (barcode: string) => {
+    if (!barcode) return true; // Barcode is optional
+    const exists = await checkBarcodeExists(barcode, editingProduct?.id);
+    if (exists) return "Barcode already exists. Please use a unique barcode.";
+    return true;
+  };
+
+  const onSubmit = async (data: ProductFormValues) => {
+    // Validate SKU uniqueness
+    const skuValid = await validateSku(data.sku);
+    if (skuValid !== true) {
+      toast({ title: "Validation Error", description: skuValid as string, variant: "destructive" });
+      return;
+    }
+
+    // Validate Barcode uniqueness
+    if (data.barcode) {
+      const barcodeValid = await validateBarcode(data.barcode);
+      if (barcodeValid !== true) {
+        toast({ title: "Validation Error", description: barcodeValid as string, variant: "destructive" });
+        return;
+      }
+    }
+
     const payload: Record<string, any> = {
       name: data.name, sku: data.sku, barcode: data.barcode || "", description: data.description || "",
       categoryId: data.categoryId || null, brandId: data.brandId || null, supplierId: data.supplierId || null,
@@ -701,49 +796,82 @@ export default function Products() {
       userId: "system", shopId: "default"
     };
 
-    if (selectedImages.length > 0) {
-      const readers = selectedImages.map(
-        (file) => new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.readAsDataURL(file);
-        })
-      );
-      Promise.all(readers).then((base64Images) => {
+    try {
+      if (selectedImages.length > 0) {
+        const readers = selectedImages.map(
+          (file) => new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(file);
+          })
+        );
+        const base64Images = await Promise.all(readers);
         payload.imageUrl = base64Images[0];
-        if (editingProduct) {
-          updateProductMutation.mutate({ id: editingProduct.id, data: payload });
-        } else {
-          createProductMutation.mutate(payload);
-        }
-      });
-    } else {
-      if (editingProduct) {
-        updateProductMutation.mutate({ id: editingProduct.id, data: payload });
-      } else {
-        createProductMutation.mutate(payload);
       }
+
+      if (editingProduct) {
+        await updateProductMutation.mutateAsync({ id: editingProduct.id, data: payload });
+      } else {
+        await createProductMutation.mutateAsync(payload);
+      }
+    } catch (error: any) {
+      console.error("Error saving product:", error);
     }
   };
 
   const handleEdit = (product: any) => {
-    setEditingProduct(product);
-    setExistingImages(product.imageUrl ? [product.imageUrl] : []);
-    form.reset({
-      name: product.name, sku: product.sku, barcode: product.barcode || "", description: product.description || "",
-      categoryId: product.category_id || "", brandId: product.brand_id || "", supplierId: product.supplier_id || "",
-      costPrice: product.cost_price?.toString() || "", sellingPrice: product.selling_price?.toString() || "",
-      stock: product.stock?.toString() || "0", minStock: product.min_stock?.toString() || "0",
-      isActive: product.is_active === 1, productType: product.product_type || "physical",
-      taxRate: product.tax_rate?.toString() || "0", discount: product.discount?.toString() || "0",
-      unitOfMeasure: product.unit_of_measure || "piece", weight: product.weight?.toString() || "0",
-      colors: product.colors || "", sizes: product.sizes || "", material: product.material || "", tags: product.tags || "",
-      warranty: product.warranty?.toString() || "0",
-      expiryDate: product.expiry_date ? new Date(product.expiry_date).toISOString().split("T")[0] : "",
-      manufacturer: product.manufacturer || "", countryOfOrigin: product.country_of_origin || "",
-    });
-    setSelectedImages([]);
-    setDialogOpen(true);
+  setEditingProduct(product);
+  // Fix: Set existing images from the product
+  const images = [];
+  if (product.image_url) {
+    images.push(product.image_url);
+  }
+  setExistingImages(images);
+  setSelectedImages([]);
+  setBarcodeQuantity(1); // Reset quantity when editing
+  
+  form.reset({
+    name: product.name, 
+    sku: product.sku, 
+    barcode: product.barcode || "", 
+    description: product.description || "",
+    categoryId: product.category_id || "", 
+    brandId: product.brand_id || "", 
+    supplierId: product.supplier_id || "",
+    costPrice: product.cost_price?.toString() || "", 
+    sellingPrice: product.selling_price?.toString() || "",
+    stock: product.stock?.toString() || "0", 
+    minStock: product.min_stock?.toString() || "0",
+    isActive: product.is_active === 1, 
+    productType: product.product_type || "physical",
+    taxRate: product.tax_rate?.toString() || "0", 
+    discount: product.discount?.toString() || "0",
+    unitOfMeasure: product.unit_of_measure || "piece", 
+    weight: product.weight?.toString() || "0",
+    colors: product.colors || "", 
+    sizes: product.sizes || "", 
+    material: product.material || "", 
+    tags: product.tags || "",
+    warranty: product.warranty?.toString() || "0",
+    expiryDate: product.expiry_date ? new Date(product.expiry_date).toISOString().split("T")[0] : "",
+    manufacturer: product.manufacturer || "", 
+    countryOfOrigin: product.country_of_origin || "",
+  });
+  setBarcodeValue(product.barcode || "");
+  setDialogOpen(true);
+};
+
+  const handleGenerateNewSKU = () => {
+    const newSKU = generateUniqueSKU();
+    form.setValue('sku', newSKU);
+    toast({ title: "SKU Generated", description: `New SKU: ${newSKU}` });
+  };
+
+  const handleGenerateNewBarcode = () => {
+    const newBarcode = generateUniqueBarcode();
+    form.setValue('barcode', newBarcode);
+    setBarcodeValue(newBarcode);
+    toast({ title: "Barcode Generated", description: `New Barcode: ${newBarcode}` });
   };
 
   const handleExport = async () => {
@@ -810,9 +938,11 @@ export default function Products() {
   const fillDemoProduct = () => {
     const expiryDate = new Date();
     expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+    const newSKU = generateUniqueSKU();
+    const newBarcode = generateUniqueBarcode();
     form.reset({
-      name: "Premium Wireless Headphones", sku: `DEMO-${Date.now()}`,
-      barcode: `880${Math.floor(100000000 + Math.random() * 900000000)}`,
+      name: "Premium Wireless Headphones", sku: newSKU,
+      barcode: newBarcode,
       description: "High-quality wireless headphones with noise cancellation.",
       categoryId: categories.length > 0 ? categories[0].id : "",
       brandId: brands.length > 0 ? brands[0].id : "",
@@ -824,7 +954,7 @@ export default function Products() {
       expiryDate: expiryDate.toISOString().split("T")[0],
       manufacturer: "SoundTech Inc.", countryOfOrigin: "China",
     });
-    setBarcodeValue(`880${Math.floor(100000000 + Math.random() * 900000000)}`);
+    setBarcodeValue(newBarcode);
     toast({ description: "Demo product loaded." });
   };
 
@@ -969,43 +1099,83 @@ export default function Products() {
                     </Button>
                   </DialogTrigger>
                   <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-                    {/* Your existing dialog content - keeping it the same */}
                     <DialogHeader>
                       <DialogTitle>{editingProduct ? "Edit Product" : "Add New Product"}</DialogTitle>
                     </DialogHeader>
                     <Form {...form}>
                       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                        {/* Keep your existing form fields */}
+                        {/* Basic Information */}
                         <div className="space-y-4">
                           <h3 className="text-lg font-semibold border-b pb-2">Basic Information</h3>
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                             <FormField control={form.control} name="name" render={({ field }) => (
                               <FormItem><FormLabel>Product Name *</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
+
                             <FormField control={form.control} name="sku" render={({ field }) => (
-                              <FormItem><FormLabel>SKU *</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                            <FormField control={form.control} name="barcode" render={({ field }) => (
                               <FormItem>
-                                <FormLabel>Barcode</FormLabel>
+                                <FormLabel>SKU *</FormLabel>
                                 <FormControl>
                                   <div className="flex space-x-2">
-                                    <Input {...field} onChange={(e) => { field.onChange(e); setBarcodeValue(e.target.value); }} />
-                                    <Input type="number" min={1} className="w-20" placeholder="Qty" value={barcodeQuantity} onChange={(e) => setBarcodeQuantity(Number(e.target.value))} />
-                                    <Button type="button" onClick={handleGenerateBarcodes}>Generate</Button>
+                                    <Input {...field} placeholder="SKU" />
+                                    <Button type="button" size="sm" variant="outline" onClick={handleGenerateNewSKU} title="Generate Unique SKU">
+                                      <RefreshCcw className="h-4 w-4" />
+                                    </Button>
                                   </div>
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
                             )} />
+
+                         <FormField control={form.control} name="barcode" render={({ field }) => (
+  <FormItem>
+    <FormLabel>Barcode</FormLabel>
+    <FormControl>
+      <div className="space-y-2">
+        <div className="flex space-x-2">
+          <Input {...field} placeholder="Barcode" className="flex-1" />
+          <Button type="button" size="sm" variant="outline" onClick={handleGenerateNewBarcode} title="Generate Unique Barcode">
+            <RefreshCcw className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex space-x-2">
+          <Input 
+            type="number" 
+            min={1} 
+            max={100}
+            placeholder="Quantity" 
+            value={barcodeQuantity} 
+            onChange={(e) => setBarcodeQuantity(Number(e.target.value))}
+            className="w-24"
+          />
+          <Button 
+            type="button" 
+            size="sm" 
+            variant="outline" 
+            onClick={() => {
+              if (field.value) {
+                setBarcodeValue(field.value);
+                handleGenerateBarcodes();
+              } else {
+                toast({ description: "Please enter or generate a barcode first", variant: "destructive" });
+              }
+            }}
+          >
+            Generate Stickers ({barcodeQuantity})
+          </Button>
+        </div>
+      </div>
+    </FormControl>
+    <FormMessage />
+  </FormItem>
+)} />
                           </div>
                         </div>
 
-                        {/* Classification */}
+                        {/* Classification - Keep your existing sections */}
                         <div className="space-y-4">
                           <h3 className="text-lg font-semibold border-b pb-2">Classification</h3>
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                            {/* Category - Hierarchical Selector */}
                             <FormField control={form.control} name="categoryId" render={({ field }) => (
                               <FormItem>
                                 <FormLabel>Category</FormLabel>
@@ -1100,10 +1270,34 @@ export default function Products() {
                         <div className="space-y-4">
                           <h3 className="text-lg font-semibold border-b pb-2">Media & Description</h3>
                           <FormField control={form.control} name="description" render={({ field }) => (<FormItem><FormLabel>Description</FormLabel><FormControl><textarea {...field} rows={3} className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" /></FormControl><FormMessage /></FormItem>)} />
-                          <FormItem><FormLabel>Product Images</FormLabel><FormControl><Input type="file" accept="image/*" multiple onChange={(e) => setSelectedImages(Array.from(e.target.files || []))} /></FormControl>
+                          <FormItem>
+                            <FormLabel>Product Images</FormLabel>
+                            <FormControl>
+                              <Input type="file" accept="image/*" multiple onChange={(e) => setSelectedImages(Array.from(e.target.files || []))} />
+                            </FormControl>
                             <div className="mt-3">
-                              {existingImages.length > 0 && selectedImages.length === 0 && (<div><p className="text-sm text-muted-foreground mb-2">Current Images:</p><div className="flex flex-wrap gap-2">{existingImages.map((img, i) => (<img key={i} src={img} className="w-24 h-24 object-cover rounded border" />))}</div></div>)}
-                              {selectedImages.length > 0 && (<div><p className="text-sm text-muted-foreground mb-2">New Images Preview:</p><div className="flex flex-wrap gap-2">{selectedImages.map((file, i) => (<img key={i} src={URL.createObjectURL(file)} className="w-24 h-24 object-cover rounded border" />))}</div></div>)}
+                              {/* Show existing images when editing */}
+                              {existingImages.length > 0 && selectedImages.length === 0 && (
+                                <div>
+                                  <p className="text-sm text-muted-foreground mb-2">Current Images:</p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {existingImages.map((img, i) => (
+                                      <img key={i} src={img} alt={`Product ${i + 1}`} className="w-24 h-24 object-cover rounded border" />
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {/* Show new images preview */}
+                              {selectedImages.length > 0 && (
+                                <div>
+                                  <p className="text-sm text-muted-foreground mb-2">New Images Preview:</p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {selectedImages.map((file, i) => (
+                                      <img key={i} src={URL.createObjectURL(file)} alt={`Preview ${i + 1}`} className="w-24 h-24 object-cover rounded border" />
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </FormItem>
                         </div>
@@ -1123,7 +1317,9 @@ export default function Products() {
                         <div className="flex justify-end space-x-2 pt-4 border-t">
                           <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
                           <Button type="button" onClick={fillDemoProduct}>Demo</Button>
-                          <Button type="submit" disabled={createProductMutation.isPending || updateProductMutation.isPending}>Save</Button>
+                          <Button type="submit" disabled={createProductMutation.isPending || updateProductMutation.isPending}>
+                            {createProductMutation.isPending || updateProductMutation.isPending ? "Saving..." : "Save"}
+                          </Button>
                         </div>
                       </form>
                     </Form>
@@ -1138,7 +1334,7 @@ export default function Products() {
             </div>
           </CardHeader>
           <CardContent>
-            {/* Filters */}
+            {/* Filters - Keep your existing filters */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
               <Input placeholder="Search products... (Ctrl+F)" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} />
               <div className="relative">
